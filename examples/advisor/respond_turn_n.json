@@ -1,0 +1,17 @@
+{
+  "briscola_suit": "clubs",
+  "face_up_trump": "c4",
+  "my_hand": ["oA", "s2"],
+  "opp_played": "oK",
+  "talon_len": 0,
+  "score_me": 50,
+  "score_opp": 48,
+  "leader": "opponent",
+  "history": [
+    { "lead": "s4", "reply": "s7" },
+    { "lead": "u5", "reply": "u2" }
+  ],
+  "seen_cards": ["cK", "uA"],
+  "samples_per_move": 128,
+  "seed": 13
+}

@@ -1,0 +1,17 @@
+{
+  "briscola_suit": "swords",
+  "face_up_trump": "s6",
+  "my_hand": ["o3", "u7", "cJ"],
+  "talon_len": 6,
+  "score_me": 32,
+  "score_opp": 40,
+  "leader": "me",
+  "history": [
+    { "lead": "c2", "reply": "o2" },
+    { "lead": "uK", "reply": "uA" },
+    { "lead": "s4", "reply": "s5" }
+  ],
+  "seen_cards": ["oA", "cK", "u3", "sA"],
+  "samples_per_move": 192,
+  "seed": 42
+}

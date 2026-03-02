@@ -1,0 +1,19 @@
+{
+  "briscola_suit": "coins",
+  "face_up_trump": "oQ",
+  "my_hand": ["cA", "u3"],
+  "opp_played": "cK",
+  "talon_len": 0,
+  "score_me": 57,
+  "score_opp": 53,
+  "leader": "opponent",
+  "history": [
+    { "lead": "sK", "reply": "sA" },
+    { "lead": "u2", "reply": "o2" },
+    { "lead": "c5", "reply": "c7" },
+    { "lead": "o6", "reply": "o7" }
+  ],
+  "seen_cards": ["oA", "o3", "uA", "uK", "s3", "sQ"],
+  "samples_per_move": 256,
+  "seed": 7
+}

@@ -1,3 +1,7 @@
+pub mod advisor;
+pub mod card_art;
+pub mod play;
+
 use briscola_ai::mc::{MonteCarloConfig, MonteCarloError, choose_best_move};
 use briscola_ai::rng::FastRng;
 use briscola_ai::rollout::{choose_lead_card, choose_reply_card};
