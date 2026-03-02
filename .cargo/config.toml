@@ -1,0 +1,5 @@
+[alias]
+fmt-all = "fmt --all"
+fmt-check = "fmt --all --check"
+lint-strict = "clippy --workspace --all-targets --all-features -- -D warnings"
+verify = "test --workspace"
