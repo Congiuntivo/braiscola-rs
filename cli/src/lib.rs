@@ -6,7 +6,7 @@ use briscola_ai::mc::{MonteCarloConfig, MonteCarloError, choose_best_move};
 use briscola_ai::rng::FastRng;
 use briscola_ai::rollout::{choose_lead_card, choose_reply_card};
 use briscola_core::bitset::{CardMask, add};
-use briscola_core::card::{Card, Suit, full_deck};
+use briscola_core::card::{Card, FULL_DECK_SIZE, HAND_SIZE, INITIAL_TALON_SIZE, Suit, full_deck};
 use briscola_core::state::{DeterminizedState, Player, PublicGameState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,13 +180,10 @@ fn select_me_card(
     rng: &mut FastRng,
 ) -> Result<Card, SimulationError> {
     match options.me_policy {
-        MePolicy::Heuristic => {
-            if let Some(opp_card) = opp_played {
-                Ok(choose_reply_card(state, Player::Me, opp_card))
-            } else {
-                Ok(choose_lead_card(state, Player::Me))
-            }
-        }
+        MePolicy::Heuristic => Ok(match opp_played {
+            Some(opp_card) => choose_reply_card(state, Player::Me, opp_card),
+            None => choose_lead_card(state, Player::Me),
+        }),
         MePolicy::BestMove => {
             let public = PublicGameState {
                 my_hand: state.my_hand.clone(),
@@ -213,7 +210,7 @@ fn select_me_card(
 
 fn initial_state(seed: u64) -> Result<DeterminizedState, SimulationError> {
     let mut deck = full_deck();
-    if deck.len() != 40 {
+    if deck.len() != FULL_DECK_SIZE {
         return Err(SimulationError::InvalidDeck);
     }
 
@@ -221,10 +218,10 @@ fn initial_state(seed: u64) -> Result<DeterminizedState, SimulationError> {
     rng.shuffle(&mut deck);
 
     let mut cursor = 0;
-    let mut my_hand = Vec::with_capacity(3);
-    let mut opp_hand = Vec::with_capacity(3);
+    let mut my_hand = Vec::with_capacity(HAND_SIZE);
+    let mut opp_hand = Vec::with_capacity(HAND_SIZE);
 
-    for _ in 0..3 {
+    for _ in 0..HAND_SIZE {
         my_hand.push(deck[cursor]);
         cursor += 1;
         opp_hand.push(deck[cursor]);
@@ -235,7 +232,7 @@ fn initial_state(seed: u64) -> Result<DeterminizedState, SimulationError> {
     cursor += 1;
     let talon = deck[cursor..].to_vec();
 
-    if talon.len() != 33 {
+    if talon.len() != INITIAL_TALON_SIZE {
         return Err(SimulationError::InvalidDeck);
     }
 

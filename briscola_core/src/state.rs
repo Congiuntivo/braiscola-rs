@@ -2,6 +2,7 @@ use crate::bitset::CardMask;
 use crate::card::{Card, Suit};
 use crate::rules::{TrickWinner, trick_points, trick_winner};
 
+/// Player identity from the perspective of the local agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Player {
     Me,
@@ -9,6 +10,7 @@ pub enum Player {
 }
 
 impl Player {
+    /// Returns the opposing player.
     pub fn other(self) -> Player {
         match self {
             Player::Me => Player::Opponent,
@@ -17,6 +19,7 @@ impl Player {
     }
 }
 
+/// Public information available at decision time.
 #[derive(Debug, Clone)]
 pub struct PublicGameState {
     pub my_hand: Vec<Card>,
@@ -31,11 +34,13 @@ pub struct PublicGameState {
 }
 
 impl PublicGameState {
+    /// Returns legal moves for the active player.
     pub fn legal_moves(&self) -> Vec<Card> {
         self.my_hand.clone()
     }
 }
 
+/// Fully specified game state used by simulation/rollout.
 #[derive(Debug, Clone)]
 pub struct DeterminizedState {
     pub my_hand: Vec<Card>,
@@ -50,6 +55,7 @@ pub struct DeterminizedState {
     pub pending_lead_by: Option<Player>,
 }
 
+/// State transition errors for determinized gameplay operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateError {
     InvalidTurn,
@@ -57,6 +63,7 @@ pub enum StateError {
     MissingLead,
 }
 
+/// Outcome for a completed trick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrickOutcome {
     pub winner: Player,
@@ -64,6 +71,7 @@ pub struct TrickOutcome {
 }
 
 impl DeterminizedState {
+    /// Returns a player's current hand.
     pub fn hand(&self, player: Player) -> &[Card] {
         match player {
             Player::Me => &self.my_hand,
@@ -71,14 +79,17 @@ impl DeterminizedState {
         }
     }
 
+    /// Returns legal moves for a player.
     pub fn legal_moves(&self, player: Player) -> Vec<Card> {
         self.hand(player).to_vec()
     }
 
+    /// True when there are no cards left in hands or talon.
     pub fn is_terminal(&self) -> bool {
         self.my_hand.is_empty() && self.opp_hand.is_empty() && self.talon.is_empty()
     }
 
+    /// Plays a lead card for the current trick leader.
     pub fn play_lead_card(&mut self, player: Player, card: Card) -> Result<(), StateError> {
         if self.pending_lead.is_some() || self.leader != player {
             return Err(StateError::InvalidTurn);
@@ -90,6 +101,7 @@ impl DeterminizedState {
         Ok(())
     }
 
+    /// Plays a reply card and resolves the trick.
     pub fn play_reply_card(
         &mut self,
         player: Player,

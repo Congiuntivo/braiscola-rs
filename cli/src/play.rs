@@ -2,7 +2,7 @@ use briscola_ai::mc::{BestMoveResult, MonteCarloConfig, choose_best_move};
 use briscola_ai::rng::FastRng;
 use briscola_ai::rollout::{choose_lead_card, choose_reply_card};
 use briscola_core::bitset::{CardMask, add};
-use briscola_core::card::{Card, full_deck};
+use briscola_core::card::{Card, FULL_DECK_SIZE, HAND_SIZE, INITIAL_TALON_SIZE, full_deck};
 use briscola_core::rules::TrickWinner;
 use briscola_core::state::{DeterminizedState, Player, PublicGameState, StateError};
 
@@ -54,15 +54,15 @@ impl PlayableGame {
         let mut deck_rng = FastRng::new(config.seed);
         deck_rng.shuffle(&mut deck);
 
-        if deck.len() != 40 {
+        if deck.len() != FULL_DECK_SIZE {
             return Err(PlayError::InvalidState);
         }
 
         let mut cursor = 0;
-        let mut my_hand = Vec::with_capacity(3);
-        let mut opp_hand = Vec::with_capacity(3);
+        let mut my_hand = Vec::with_capacity(HAND_SIZE);
+        let mut opp_hand = Vec::with_capacity(HAND_SIZE);
 
-        for _ in 0..3 {
+        for _ in 0..HAND_SIZE {
             my_hand.push(deck[cursor]);
             cursor += 1;
             opp_hand.push(deck[cursor]);
@@ -72,7 +72,7 @@ impl PlayableGame {
         let face_up_trump = deck[cursor];
         cursor += 1;
         let talon = deck[cursor..].to_vec();
-        if talon.len() != 33 {
+        if talon.len() != INITIAL_TALON_SIZE {
             return Err(PlayError::InvalidState);
         }
         let mut leader_rng = FastRng::new(config.seed ^ 0xC3C3_C3C3_7A7A_7A7A);
@@ -278,10 +278,6 @@ impl PlayableGame {
     }
 
     fn choose_opponent_lead(&mut self) -> Result<Card, PlayError> {
-        if self.opponent_samples == 0 {
-            return Ok(choose_lead_card(&self.state, Player::Opponent));
-        }
-
         let public = PublicGameState {
             my_hand: self.state.opp_hand.clone(),
             opp_played: None,
@@ -300,14 +296,10 @@ impl PlayableGame {
             MonteCarloConfig { samples_per_move: self.opponent_samples },
         )
         .map(|result| result.best_move)
-        .map_err(|_| PlayError::OpponentMoveFailed)
+        .or_else(|_| Ok(choose_lead_card(&self.state, Player::Opponent)))
     }
 
     fn choose_opponent_reply(&mut self, my_lead: Card) -> Result<Card, PlayError> {
-        if self.opponent_samples == 0 {
-            return Ok(choose_reply_card(&self.state, Player::Opponent, my_lead));
-        }
-
         let mut seen = self.seen_by_opp;
         seen = add(seen, my_lead);
 
@@ -329,7 +321,7 @@ impl PlayableGame {
             MonteCarloConfig { samples_per_move: self.opponent_samples },
         )
         .map(|result| result.best_move)
-        .map_err(|_| PlayError::OpponentMoveFailed)
+        .or_else(|_| Ok(choose_reply_card(&self.state, Player::Opponent, my_lead)))
     }
 }
 
@@ -366,6 +358,7 @@ pub fn trick_winner_for_display(
 #[cfg(test)]
 mod tests {
     use super::{PlayConfig, PlayableGame};
+    use briscola_core::card::INITIAL_TALON_SIZE;
     use briscola_core::state::Player;
 
     #[test]
@@ -379,7 +372,7 @@ mod tests {
 
         assert_eq!(game.my_hand().len(), 3);
         assert_eq!(game.opponent_cards_remaining(), 3);
-        assert_eq!(game.talon_len(), 33);
+        assert_eq!(game.talon_len(), INITIAL_TALON_SIZE);
     }
 
     #[test]
@@ -441,5 +434,24 @@ mod tests {
         }
 
         assert!(saw_me && saw_opponent);
+    }
+
+    #[test]
+    fn opponent_move_generation_does_not_fail_across_seeds() {
+        for seed in 1..=128_u64 {
+            let mut game =
+                PlayableGame::new(PlayConfig { seed, ..PlayConfig::default() }).expect("new game");
+
+            while !game.is_game_over() {
+                game.maybe_play_opponent_lead().expect("opponent lead should not fail");
+                if !game.is_player_turn() {
+                    continue;
+                }
+
+                let card = game.my_hand()[0];
+                game.play_player_card(card)
+                    .expect("player turn should complete without opponent move failure");
+            }
+        }
     }
 }

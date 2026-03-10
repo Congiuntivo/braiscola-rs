@@ -7,11 +7,13 @@ use crate::determinize::{DeterminizeError, sample_world};
 use crate::rng::FastRng;
 use crate::rollout::{choose_lead_card, choose_reply_card};
 
+/// Monte Carlo search configuration.
 #[derive(Debug, Clone, Copy)]
 pub struct MonteCarloConfig {
     pub samples_per_move: usize,
 }
 
+/// Aggregated statistics for a legal move.
 #[derive(Debug, Clone, Copy)]
 pub struct MoveStats {
     pub card: Card,
@@ -20,12 +22,14 @@ pub struct MoveStats {
     pub n_samples: usize,
 }
 
+/// Ranked result for all legal moves.
 #[derive(Debug, Clone)]
 pub struct BestMoveResult {
     pub best_move: Card,
     pub moves: Vec<MoveStats>,
 }
 
+/// Failures that can occur while selecting a move by simulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MonteCarloError {
     NoLegalMoves,
@@ -35,6 +39,7 @@ pub enum MonteCarloError {
     NoSuccessfulSamples,
 }
 
+/// Chooses the best move among legal options using sampled hidden information.
 pub fn choose_best_move(
     public: &PublicGameState,
     rng: &mut FastRng,

@@ -39,7 +39,8 @@ cargo run -p cli --bin simulate_game -- 42
 cargo run -p cli --bin simulate_game -- 42 --best-me --samples 256
 cargo run -p cli --bin advisor -- interactive --samples 128 --seed 42
 cargo run -p cli --bin advisor -- suggest --json /path/to/turn_n.json --samples 128 --seed 42
-cargo run -p cli --bin play_tui -- --seed 42 --hint-samples 128 --opponent-samples 96
+cargo run -p cli --bin play_tui --
+cargo run -p cli --bin play_tui -- 42 --hint-samples 128 --opponent-samples 96
 ```
 
 ## More Examples
@@ -100,6 +101,7 @@ Example files:
 - `cargo run -p cli --bin advisor -- suggest --json ...` computes the best move for turn `N+1` from a JSON description of turns `1..N`.
 - Advisor modes render terminal ASCII card art from `res/napoletane/*.webp`; white card background is treated as transparent.
 - `cargo run -p cli --bin play_tui -- ...` launches a fully interactive game where you play as `Me` against the AI.
+- `play_tui` defaults to a random seed if no seed is provided (`play_tui -- 42` or `--seed 42` for reproducible runs).
 
 ### TUI Controls
 
@@ -113,7 +115,9 @@ The TUI automatically handles:
 - opponent turns,
 - score updates,
 - trick winner calculation,
-- card counts and trump display on screen.
+- card counts and trump display on screen,
+- a dedicated table-cards panel that shows current table cards,
+- end-of-turn winner feedback: the winning table card flashes with a green border.
 
 ## Advisor JSON Format
 
@@ -122,24 +126,24 @@ The TUI automatically handles:
 ```json
 {
   "briscola_suit": "clubs",
-  "face_up_trump": "c4",
-  "my_hand": ["oA", "s2"],
-  "opp_played": "oK",
+  "face_up_trump": "🪄4",
+  "my_hand": ["🪙A", "⚔️2"],
+  "opp_played": "🪙K",
   "talon_len": 0,
   "score_me": 50,
   "score_opp": 48,
   "leader": "opponent",
   "history": [
-    { "lead": "s4", "reply": "s7" }
+    { "lead": "⚔️4", "reply": "⚔️7" }
   ],
-  "seen_cards": ["cK"],
+  "seen_cards": ["🪄K"],
   "samples_per_move": 128,
   "seed": 42
 }
 ```
 
 Required fields:
-- `briscola_suit`: briscola suit (`coins|cups|swords|clubs` or aliases `o|u|s|c`).
+- `briscola_suit`: briscola suit (`coins|cups|swords|clubs`, aliases `o|u|s|c`, `d|b`, or suit emojis).
 - `face_up_trump`: face-up trump card.
 - `my_hand`: your current hand (1 to 3 cards).
 - `talon_len`: cards left in talon.
@@ -155,8 +159,10 @@ Optional fields:
 - `seed`: RNG seed for reproducibility (default `42`).
 
 Card format accepted:
-- Compact form: `<suit><rank>` like `oA`, `cK`, `s3`, `u7`.
+- Compact form: `<suit><rank>` like `🪙A`, `🪄K`, `⚔️3`, `🏆7`.
+- Legacy compact aliases are still accepted: `oA`, `cK`, `s3`, `u7` (plus `d` for denari and `b` for bastoni).
 - Explicit form: `<suit>:<rank>` like `clubs:K`, `coins:A`.
+- Suit emoji mapping: `🏆` coppe, `🪙` denari, `⚔️` spade, `🪄` bastoni.
 - Rank tokens: `A,2,3,4,5,6,7,J,Q,K` (also accepts names like `ace`, `king`, `fante`, `re`).
 
 Advisor mode behavior:

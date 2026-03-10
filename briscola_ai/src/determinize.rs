@@ -4,11 +4,13 @@ use briscola_core::state::{DeterminizedState, Player, PublicGameState};
 
 use crate::rng::FastRng;
 
+/// Errors while building a determinized world from public information.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeterminizeError {
     InvalidPublicState,
 }
 
+/// Samples a full hidden game state that is consistent with the public view.
 pub fn sample_world(
     public: &PublicGameState,
     rng: &mut FastRng,
@@ -20,16 +22,16 @@ pub fn sample_world(
         }
     }
 
-    let expected_opp_hand_len = expected_opp_hand_len(public);
-    let required_unknown = expected_opp_hand_len + public.talon_len;
+    let expected_opponent_hand_len = expected_opponent_hand_len(public);
+    let required_unknown = expected_opponent_hand_len + public.talon_len;
     if unknown.len() < required_unknown {
         return Err(DeterminizeError::InvalidPublicState);
     }
 
     rng.shuffle(&mut unknown);
     let sampled = &unknown[..required_unknown];
-    let opp_hand = sampled[..expected_opp_hand_len].to_vec();
-    let talon = sampled[expected_opp_hand_len..].to_vec();
+    let opp_hand = sampled[..expected_opponent_hand_len].to_vec();
+    let talon = sampled[expected_opponent_hand_len..].to_vec();
 
     Ok(DeterminizedState {
         my_hand: public.my_hand.clone(),
@@ -45,7 +47,7 @@ pub fn sample_world(
     })
 }
 
-fn expected_opp_hand_len(public: &PublicGameState) -> usize {
+fn expected_opponent_hand_len(public: &PublicGameState) -> usize {
     if public.opp_played.is_some() {
         public.my_hand.len().saturating_sub(1)
     } else {

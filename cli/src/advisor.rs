@@ -4,11 +4,12 @@ use std::path::Path;
 use briscola_ai::mc::{BestMoveResult, MonteCarloConfig, choose_best_move};
 use briscola_ai::rng::FastRng;
 use briscola_core::bitset::{CardMask, add, contains};
-use briscola_core::card::{Card, Rank, Suit, full_deck};
+use briscola_core::card::{Card, HAND_SIZE, INITIAL_TALON_SIZE, Rank, Suit, full_deck};
 use briscola_core::rules::{TrickWinner, trick_points, trick_winner};
 use briscola_core::state::{Player, PublicGameState};
 use serde::Deserialize;
 
+/// Initial public state required to bootstrap an interactive advisor session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InteractiveInit {
     pub briscola_suit: Suit,
@@ -19,6 +20,7 @@ pub struct InteractiveInit {
     pub score_opp: u8,
 }
 
+/// Score and winner information for a resolved turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TurnResult {
     pub winner: Player,
@@ -28,6 +30,7 @@ pub struct TurnResult {
     pub talon_len: usize,
 }
 
+/// Interactive advisor session errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionError {
     InvalidSetup,
@@ -36,6 +39,7 @@ pub enum SessionError {
     SuggestionFailed,
 }
 
+/// Stateful advisor session for turn-by-turn manual play tracking.
 #[derive(Debug, Clone)]
 pub struct InteractiveSession {
     briscola_suit: Suit,
@@ -50,11 +54,15 @@ pub struct InteractiveSession {
 }
 
 impl InteractiveSession {
+    /// Creates a new session from public game setup and current hand.
     pub fn new(init: InteractiveInit, my_initial_hand: Vec<Card>) -> Result<Self, SessionError> {
         if init.face_up_trump.suit != init.briscola_suit {
             return Err(SessionError::InvalidSetup);
         }
-        if my_initial_hand.is_empty() || my_initial_hand.len() > 3 || init.talon_len > 33 {
+        if my_initial_hand.is_empty()
+            || my_initial_hand.len() > HAND_SIZE
+            || init.talon_len > INITIAL_TALON_SIZE
+        {
             return Err(SessionError::InvalidSetup);
         }
 
@@ -104,6 +112,7 @@ impl InteractiveSession {
         self.my_hand.is_empty() && self.talon_len == 0
     }
 
+    /// Computes move suggestions for the current turn.
     pub fn suggest_move(
         &self,
         opp_played: Option<Card>,
@@ -135,6 +144,7 @@ impl InteractiveSession {
         .map_err(|_| SessionError::SuggestionFailed)
     }
 
+    /// Applies a completed turn and advances session state.
     pub fn apply_turn(
         &mut self,
         opp_played: Option<Card>,
@@ -212,6 +222,7 @@ impl InteractiveSession {
     }
 }
 
+/// JSON payload used by `advisor suggest`.
 #[derive(Debug, Deserialize)]
 pub struct JsonSuggestionInput {
     pub briscola_suit: String,
@@ -230,12 +241,14 @@ pub struct JsonSuggestionInput {
     pub seed: Option<u64>,
 }
 
+/// One completed trick from historical play.
 #[derive(Debug, Deserialize)]
 pub struct JsonTrick {
     pub lead: String,
     pub reply: String,
 }
 
+/// Computes best move suggestion from JSON file input.
 pub fn suggest_from_json_path(
     path: &Path,
     samples_override: Option<usize>,
@@ -248,6 +261,7 @@ pub fn suggest_from_json_path(
     suggest_from_json_input(&input, samples_override, seed_override)
 }
 
+/// Computes best move suggestion from parsed JSON input.
 pub fn suggest_from_json_input(
     input: &JsonSuggestionInput,
     samples_override: Option<usize>,
@@ -260,8 +274,8 @@ pub fn suggest_from_json_input(
     }
 
     let my_hand = parse_card_list(&input.my_hand)?;
-    if my_hand.is_empty() || my_hand.len() > 3 {
-        return Err(String::from("my_hand must contain 1 to 3 cards"));
+    if my_hand.is_empty() || my_hand.len() > HAND_SIZE {
+        return Err(format!("my_hand must contain 1 to {HAND_SIZE} cards"));
     }
 
     let opp_played = match &input.opp_played {
@@ -312,6 +326,7 @@ pub fn suggest_from_json_input(
     .map_err(|error| format!("suggestion failed: {error:?}"))
 }
 
+/// Parses a list of card tokens.
 pub fn parse_card_list(items: &[String]) -> Result<Vec<Card>, String> {
     let mut cards = Vec::with_capacity(items.len());
     for item in items {
@@ -320,6 +335,7 @@ pub fn parse_card_list(items: &[String]) -> Result<Vec<Card>, String> {
     Ok(cards)
 }
 
+/// Parses a card token in compact (`🪙A`, `oA`) or explicit (`coins:A`) format.
 pub fn parse_card(input: &str) -> Result<Card, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -328,11 +344,8 @@ pub fn parse_card(input: &str) -> Result<Card, String> {
 
     let (suit_part, rank_part) = if let Some((left, right)) = trimmed.split_once(':') {
         (left.trim(), right.trim())
-    } else if trimmed.len() >= 2 {
-        let suit_len = trimmed.char_indices().nth(1).map_or(trimmed.len(), |(index, _)| index);
-        (&trimmed[..suit_len], &trimmed[suit_len..])
     } else {
-        return Err(format!("invalid card notation '{trimmed}'"));
+        split_compact_card(trimmed).ok_or_else(|| format!("invalid card notation '{trimmed}'"))?
     };
 
     let suit = parse_suit(suit_part)?;
@@ -340,12 +353,13 @@ pub fn parse_card(input: &str) -> Result<Card, String> {
     Ok(Card::new(suit, rank))
 }
 
+/// Formats a card using compact emoji suit notation.
 pub fn format_card(card: Card) -> String {
     let suit_token = match card.suit {
-        Suit::Coins => "o",
-        Suit::Cups => "u",
-        Suit::Swords => "s",
-        Suit::Clubs => "c",
+        Suit::Coins => "🪙",
+        Suit::Cups => "🏆",
+        Suit::Swords => "⚔️",
+        Suit::Clubs => "🪄",
     };
 
     let rank_token = match card.rank {
@@ -364,6 +378,18 @@ pub fn format_card(card: Card) -> String {
     format!("{suit_token}{rank_token}")
 }
 
+fn split_compact_card(input: &str) -> Option<(&str, &str)> {
+    for prefix in ["⚔️", "🪙", "🏆", "🪄", "o", "u", "s", "c", "d", "b"] {
+        if let Some(rest) = input.strip_prefix(prefix)
+            && !rest.trim().is_empty()
+        {
+            return Some((prefix, rest.trim()));
+        }
+    }
+    None
+}
+
+/// Parses player token (`me`/`opponent` aliases accepted).
 pub fn parse_player(input: &str) -> Result<Player, String> {
     match input.trim().to_ascii_lowercase().as_str() {
         "me" | "m" | "player" => Ok(Player::Me),
@@ -372,12 +398,13 @@ pub fn parse_player(input: &str) -> Result<Player, String> {
     }
 }
 
+/// Parses suit token in English, Italian, legacy short, or emoji form.
 pub fn parse_suit(input: &str) -> Result<Suit, String> {
     match input.trim().to_ascii_lowercase().as_str() {
-        "coins" | "coin" | "o" | "oro" => Ok(Suit::Coins),
-        "cups" | "cup" | "u" | "coppe" => Ok(Suit::Cups),
-        "swords" | "sword" | "s" | "spade" => Ok(Suit::Swords),
-        "clubs" | "club" | "c" | "bastoni" => Ok(Suit::Clubs),
+        "coins" | "coin" | "o" | "oro" | "denari" | "denaro" | "d" | "🪙" => Ok(Suit::Coins),
+        "cups" | "cup" | "u" | "coppe" | "coppa" | "🏆" => Ok(Suit::Cups),
+        "swords" | "sword" | "s" | "spade" | "⚔️" | "⚔" => Ok(Suit::Swords),
+        "clubs" | "club" | "c" | "bastoni" | "b" | "🪄" => Ok(Suit::Clubs),
         _ => Err(format!("invalid suit '{input}'")),
     }
 }
@@ -398,6 +425,7 @@ fn parse_rank(input: &str) -> Result<Rank, String> {
     }
 }
 
+/// Returns a full deck excluding the given cards.
 pub fn all_cards_except(excluded: &[Card]) -> Vec<Card> {
     let mut cards = Vec::new();
     for card in full_deck() {
@@ -418,6 +446,8 @@ mod tests {
     #[test]
     fn parse_card_supports_compact_and_colon_formats() {
         assert_eq!(parse_card("oA").ok(), Some(Card::new(Suit::Coins, Rank::Ace)));
+        assert_eq!(parse_card("🪙A").ok(), Some(Card::new(Suit::Coins, Rank::Ace)));
+        assert_eq!(parse_card("⚔️7").ok(), Some(Card::new(Suit::Swords, Rank::Seven)));
         assert_eq!(parse_card("clubs:K").ok(), Some(Card::new(Suit::Clubs, Rank::King)));
         assert!(parse_card("bad").is_err());
     }

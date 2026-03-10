@@ -1,8 +1,10 @@
 use std::collections::VecDeque;
 use std::io;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use briscola_ai::mc::BestMoveResult;
+use briscola_core::card::{Card, HAND_SIZE};
 use briscola_core::state::Player;
 use cli::advisor::format_card;
 use cli::card_art::{TerminalCardRenderer, card_name_english, card_name_italian};
@@ -28,20 +30,53 @@ struct CliOptions {
 
 impl Default for CliOptions {
     fn default() -> Self {
-        Self { seed: 42, hint_samples: 128, opponent_samples: 96 }
+        Self { seed: random_seed(), hint_samples: 128, opponent_samples: 96 }
     }
+}
+
+fn random_seed() -> u64 {
+    let base = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => {
+            let nanos = duration.as_nanos();
+            let low = u64::try_from(nanos & u128::from(u64::MAX)).unwrap_or(0);
+            let high = u64::try_from(nanos >> 64).unwrap_or(0);
+            low ^ high
+        }
+        Err(_) => 0x9E37_79B9_7F4A_7C15,
+    };
+    base ^ u64::from(std::process::id())
 }
 
 struct UiState {
     game: PlayableGame,
+    seed: u64,
     selected_index: usize,
     hint_enabled: bool,
     cached_hint: Option<BestMoveResult>,
     status: String,
     log: VecDeque<String>,
     renderer: TerminalCardRenderer,
+    table_renderer: TerminalCardRenderer,
     art_error: Option<String>,
+    last_trick: Option<CompletedTrickView>,
+    winner_flash_on: bool,
 }
+
+#[derive(Debug, Clone, Copy)]
+struct CompletedTrickView {
+    my_card: Card,
+    opp_card: Card,
+    winner: Player,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TableSlotView<'a> {
+    title: &'a str,
+    card: Option<Card>,
+    is_winner_highlighted: bool,
+}
+
+const HAND_SLOTS: usize = HAND_SIZE;
 
 impl UiState {
     fn new(config: CliOptions) -> Result<Self, String> {
@@ -57,13 +92,17 @@ impl UiState {
 
         Ok(Self {
             game,
+            seed: config.seed,
             selected_index: 0,
             hint_enabled: false,
             cached_hint: None,
             status: String::from("Select a card and press Enter."),
             log,
-            renderer: TerminalCardRenderer::new(16),
+            renderer: TerminalCardRenderer::new(14),
+            table_renderer: TerminalCardRenderer::new(10),
             art_error: None,
+            last_trick: None,
+            winner_flash_on: false,
         })
     }
 
@@ -106,10 +145,11 @@ impl Drop for TerminalGuard {
 fn parse_cli_options() -> Result<CliOptions, String> {
     let mut options = CliOptions::default();
     let mut args = std::env::args().skip(1);
+    let mut parsed_positional_seed = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--seed" => {
+            "--seed" | "-s" => {
                 let Some(value) = args.next() else {
                     return Err(String::from("missing value after --seed"));
                 };
@@ -135,8 +175,14 @@ fn parse_cli_options() -> Result<CliOptions, String> {
             }
             "-h" | "--help" => {
                 return Err(String::from(
-                    "usage: play_tui [--seed N] [--hint-samples N] [--opponent-samples N]",
+                    "usage: play_tui [seed] [--seed N|-s N] [--hint-samples N] [--opponent-samples N]\nseed defaults to a random value when omitted",
                 ));
+            }
+            _ if !arg.starts_with('-') && !parsed_positional_seed => {
+                options.seed = arg
+                    .parse::<u64>()
+                    .map_err(|error| format!("invalid positional seed '{arg}': {error}"))?;
+                parsed_positional_seed = true;
             }
             _ => return Err(format!("unexpected argument '{arg}'")),
         }
@@ -249,6 +295,11 @@ fn run_game(options: CliOptions) -> Result<(), String> {
 
                 match ui.game.play_player_card(chosen_card) {
                     Ok(outcome) => {
+                        ui.last_trick = Some(CompletedTrickView {
+                            my_card: chosen_card,
+                            opp_card: outcome.opponent_card,
+                            winner: outcome.winner,
+                        });
                         ui.status = format!(
                             "Played {} | Opp {} | Winner {:?} | +{}",
                             format_card(chosen_card),
@@ -258,6 +309,8 @@ fn run_game(options: CliOptions) -> Result<(), String> {
                         );
                         ui.push_log(ui.status.clone());
                         ui.cached_hint = None;
+                        animate_turn_winner_flash(&mut guard, &mut ui)?;
+                        ui.last_trick = None;
                     }
                     Err(PlayError::InvalidMove) => {
                         ui.status = String::from("Invalid card selection");
@@ -313,6 +366,7 @@ fn render(frame: &mut Frame<'_>, ui: &mut UiState) {
         Line::from(format!("Talon: {}", ui.game.talon_len())),
         Line::from(format!("Opp cards: {}", ui.game.opponent_cards_remaining())),
         Line::from(format!("Leader: {}", player_label(ui.game.leader()))),
+        Line::from(format!("Seed: {}", ui.seed)),
     ]))
     .block(Block::default().borders(Borders::ALL).title("Table"));
     frame.render_widget(meta_block, info_layout[1]);
@@ -329,45 +383,16 @@ fn render(frame: &mut Frame<'_>, ui: &mut UiState) {
 
     let play_area = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(72), Constraint::Percentage(28)])
+        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
         .split(vertical[2]);
 
     render_hand_cards(frame, play_area[0], ui);
-
-    let hint_rows: Vec<Row<'_>> = if ui.hint_enabled {
-        if let Some(hint) = ui.cached_hint.as_ref() {
-            hint.moves
-                .iter()
-                .map(|stats| {
-                    Row::new(vec![
-                        Cell::from(format_card(stats.card)),
-                        Cell::from(format!("{:.3}", stats.p_win)),
-                        Cell::from(format!("{:.2}", stats.expected_score_delta)),
-                    ])
-                })
-                .collect()
-        } else {
-            vec![Row::new(vec![Cell::from("calculating"), Cell::from("-"), Cell::from("-")])]
-        }
-    } else {
-        vec![Row::new(vec![Cell::from("disabled"), Cell::from("-"), Cell::from("-")])]
-    };
-
-    let hint_table = Table::new(
-        hint_rows,
-        [Constraint::Length(8), Constraint::Length(8), Constraint::Length(10)],
-    )
-    .header(
-        Row::new(vec!["Card", "p_win", "ev"])
-            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-    )
-    .block(Block::default().borders(Borders::ALL).title(if ui.hint_enabled {
-        "Hint (ON)"
-    } else {
-        "Hint (OFF)"
-    }))
-    .column_spacing(1);
-    frame.render_widget(hint_table, play_area[1]);
+    let side_area = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(72), Constraint::Percentage(28)])
+        .split(play_area[1]);
+    render_table_cards(frame, side_area[0], ui);
+    render_hint_table(frame, side_area[1], ui);
 
     let log_lines: Vec<ListItem<'_>> =
         ui.log.iter().rev().take(6).map(|line| ListItem::new(line.as_str())).collect();
@@ -407,28 +432,167 @@ fn render(frame: &mut Frame<'_>, ui: &mut UiState) {
     }
 }
 
-fn render_hand_cards(frame: &mut Frame<'_>, area: Rect, ui: &mut UiState) {
-    let hand = ui.game.my_hand().to_vec();
-    if hand.is_empty() {
-        let empty = Paragraph::new("No cards in hand")
-            .block(Block::default().borders(Borders::ALL).title("Your Hand"));
-        frame.render_widget(empty, area);
+fn render_hint_table(frame: &mut Frame<'_>, area: Rect, ui: &UiState) {
+    let hint_rows: Vec<Row<'_>> = if ui.hint_enabled {
+        if let Some(hint) = ui.cached_hint.as_ref() {
+            hint.moves
+                .iter()
+                .map(|stats| {
+                    Row::new(vec![
+                        Cell::from(format_card(stats.card)),
+                        Cell::from(format!("{:.3}", stats.p_win)),
+                        Cell::from(format!("{:.2}", stats.expected_score_delta)),
+                    ])
+                })
+                .collect()
+        } else {
+            vec![Row::new(vec![Cell::from("calculating"), Cell::from("-"), Cell::from("-")])]
+        }
+    } else {
+        vec![Row::new(vec![Cell::from("disabled"), Cell::from("-"), Cell::from("-")])]
+    };
+
+    let hint_table = Table::new(
+        hint_rows,
+        [Constraint::Length(8), Constraint::Length(8), Constraint::Length(10)],
+    )
+    .header(
+        Row::new(vec!["Card", "p_win", "ev"])
+            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+    )
+    .block(Block::default().borders(Borders::ALL).title(if ui.hint_enabled {
+        "Hint (ON)"
+    } else {
+        "Hint (OFF)"
+    }))
+    .column_spacing(1);
+    frame.render_widget(hint_table, area);
+}
+
+fn render_table_cards(frame: &mut Frame<'_>, area: Rect, ui: &mut UiState) {
+    let outer = Block::default().borders(Borders::ALL).title("Table Cards");
+    let inner = outer.inner(area);
+    frame.render_widget(outer, area);
+
+    if inner.width < 6 || inner.height < 5 {
         return;
     }
 
-    let Ok(hand_len_u32) = u32::try_from(hand.len()) else {
-        let fallback = Paragraph::new("Hand too large to render")
-            .block(Block::default().borders(Borders::ALL).title("Your Hand"));
-        frame.render_widget(fallback, area);
-        return;
+    let (opp_card, my_card, winner) = if let Some(last_trick) = ui.last_trick {
+        (Some(last_trick.opp_card), Some(last_trick.my_card), Some(last_trick.winner))
+    } else {
+        (ui.game.current_opponent_lead(), None, None)
     };
-    let card_constraints = vec![Constraint::Ratio(1, hand_len_u32); hand.len()];
+
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(inner);
+
+    let opp_highlight = ui.winner_flash_on && winner == Some(Player::Opponent);
+    let my_highlight = ui.winner_flash_on && winner == Some(Player::Me);
+
+    render_table_slot(
+        frame,
+        columns[0],
+        TableSlotView { title: "Opponent", card: opp_card, is_winner_highlighted: opp_highlight },
+        ui,
+    );
+    render_table_slot(
+        frame,
+        columns[1],
+        TableSlotView { title: "Me", card: my_card, is_winner_highlighted: my_highlight },
+        ui,
+    );
+}
+
+fn render_table_slot(frame: &mut Frame<'_>, area: Rect, slot: TableSlotView<'_>, ui: &mut UiState) {
+    let border_style = if slot.is_winner_highlighted {
+        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let mut lines = Vec::new();
+    if let Some(card) = slot.card {
+        lines.push(Line::from(Span::styled(
+            format_card(card),
+            Style::default().fg(Color::LightCyan),
+        )));
+        lines.push(Line::from(format!("Pts {}", card.rank.points())));
+        lines.push(Line::default());
+
+        match ui.table_renderer.render_card(card) {
+            Ok(card_lines) => lines.extend(card_lines),
+            Err(error) => {
+                if ui.art_error.is_none() {
+                    ui.art_error = Some(error.clone());
+                    ui.status = format!("Card rendering disabled: {error}");
+                }
+            }
+        }
+    } else {
+        lines.push(Line::from("-"));
+        lines.push(Line::from("waiting"));
+    }
+
+    let panel = Paragraph::new(Text::from(lines))
+        .block(Block::default().borders(Borders::ALL).title(slot.title).border_style(border_style))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(panel, area);
+}
+
+fn animate_turn_winner_flash(guard: &mut TerminalGuard, ui: &mut UiState) -> Result<(), String> {
+    const FLASHES: usize = 3;
+    const INTERVAL_MS: u64 = 300;
+
+    for step in 0..(FLASHES * 2) {
+        ui.winner_flash_on = step % 2 == 0;
+        guard
+            .terminal_mut()
+            .draw(|frame| render(frame, ui))
+            .map_err(|error| format!("draw failed: {error}"))?;
+        thread::sleep(Duration::from_millis(INTERVAL_MS));
+    }
+
+    ui.winner_flash_on = false;
+    clear_pending_input_events()?;
+    Ok(())
+}
+
+fn clear_pending_input_events() -> Result<(), String> {
+    while event::poll(Duration::from_millis(0)).map_err(|error| format!("poll failed: {error}"))? {
+        let _ = event::read().map_err(|error| format!("input read failed: {error}"))?;
+    }
+    Ok(())
+}
+
+fn render_hand_cards(frame: &mut Frame<'_>, area: Rect, ui: &mut UiState) {
+    let hand = ui.game.my_hand().to_vec();
+    let card_constraints = vec![Constraint::Ratio(1, 3); HAND_SLOTS];
     let card_areas = Layout::default()
         .direction(Direction::Horizontal)
         .constraints(card_constraints)
         .split(area);
 
-    for (index, card) in hand.iter().enumerate() {
+    for (index, slot_area) in card_areas.iter().enumerate().take(HAND_SLOTS) {
+        let Some(card) = hand.get(index).copied() else {
+            let empty_card = Paragraph::new(Text::from(vec![
+                Line::from(format!("[{}]", index + 1)),
+                Line::default(),
+                Line::from("Empty"),
+            ]))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Your Hand")
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            )
+            .wrap(Wrap { trim: false });
+            frame.render_widget(empty_card, *slot_area);
+            continue;
+        };
+
         let is_selected = index == ui.selected_index;
         let is_briscola = card.suit == ui.game.briscola_suit();
         let name_style = if is_briscola {
@@ -448,14 +612,14 @@ fn render_hand_cards(frame: &mut Frame<'_>, area: Rect, ui: &mut UiState) {
                     format!("[{}] ", index + 1),
                     Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(card_name_english(*card), name_style),
+                Span::styled(card_name_english(card), name_style),
             ]),
-            Line::from(Span::styled(card_name_italian(*card), italian_name_style)),
+            Line::from(Span::styled(card_name_italian(card), italian_name_style)),
             Line::from(format!("Points: {}", card.rank.points())),
             Line::default(),
         ];
 
-        match ui.renderer.render_card(*card) {
+        match ui.renderer.render_card(card) {
             Ok(card_art_lines) => {
                 lines.extend(card_art_lines);
             }
@@ -465,7 +629,7 @@ fn render_hand_cards(frame: &mut Frame<'_>, area: Rect, ui: &mut UiState) {
                     ui.status = format!("Card rendering disabled: {error}");
                 }
                 lines.push(Line::from(Span::styled(
-                    format_card(*card),
+                    format_card(card),
                     Style::default().fg(Color::LightBlue),
                 )));
             }
@@ -483,7 +647,7 @@ fn render_hand_cards(frame: &mut Frame<'_>, area: Rect, ui: &mut UiState) {
 
         let card_widget =
             Paragraph::new(Text::from(lines)).block(card_block).wrap(Wrap { trim: false });
-        frame.render_widget(card_widget, card_areas[index]);
+        frame.render_widget(card_widget, *slot_area);
     }
 }
 

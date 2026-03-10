@@ -1,16 +1,16 @@
-use std::collections::HashMap;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
+use briscola_ai::mc::MoveStats;
 use briscola_ai::rng::FastRng;
-use briscola_core::card::{Card, Rank, Suit};
+use briscola_core::card::{Card, HAND_SIZE, INITIAL_TALON_SIZE, Suit};
 use briscola_core::rules::{TrickWinner, trick_winner};
 use briscola_core::state::Player;
 use cli::advisor::{
     InteractiveInit, InteractiveSession, format_card, parse_card, parse_card_list, parse_player,
     parse_suit, suggest_from_json_path,
 };
-use image::{ImageReader, imageops::FilterType};
+use cli::card_art::AsciiCardRenderer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -26,108 +26,14 @@ struct CliConfig {
     seed: u64,
 }
 
-struct AsciiCardRenderer {
-    cache: HashMap<Card, Vec<String>>,
-    max_width: usize,
-}
-
-impl AsciiCardRenderer {
-    fn new(max_width: usize) -> Self {
-        Self { cache: HashMap::new(), max_width }
-    }
-
-    fn max_width(&self) -> usize {
-        self.max_width
-    }
-
-    fn render_card(&mut self, card: Card) -> Result<Vec<String>, String> {
-        if let Some(lines) = self.cache.get(&card) {
-            return Ok(lines.clone());
-        }
-
-        let lines = self.render_card_uncached(card)?;
-        self.cache.insert(card, lines.clone());
-        Ok(lines)
-    }
-
-    fn render_card_uncached(&self, card: Card) -> Result<Vec<String>, String> {
-        let image_path = card_asset_path(card);
-        let image = ImageReader::open(&image_path)
-            .map_err(|error| format!("cannot open card image '{}': {error}", image_path.display()))?
-            .decode()
-            .map_err(|error| {
-                format!("cannot decode card image '{}': {error}", image_path.display())
-            })?
-            .to_rgba8();
-
-        let Some((min_x, min_y, max_x, max_y)) = non_background_bounds(&image) else {
-            return Err(format!("card image '{}' has no visible pixels", image_path.display()));
-        };
-
-        let crop_w = max_x - min_x + 1;
-        let crop_h = max_y - min_y + 1;
-        let cropped = image::imageops::crop_imm(&image, min_x, min_y, crop_w, crop_h).to_image();
-
-        let target_w_u32 =
-            u32::try_from(self.max_width).map_err(|_| String::from("invalid target width"))?;
-        let mut target_h =
-            crop_h.saturating_mul(target_w_u32).saturating_mul(55) / crop_w.saturating_mul(100);
-        target_h = target_h.clamp(10, 24);
-
-        let resized =
-            image::imageops::resize(&cropped, target_w_u32, target_h, FilterType::Triangle);
-        let shades: &[u8] = b"@%#*+=-:.";
-        let shades_last = u32::try_from(shades.len().saturating_sub(1))
-            .map_err(|_| String::from("invalid shade table"))?;
-
-        let mut lines = Vec::with_capacity(
-            usize::try_from(target_h).map_err(|_| String::from("invalid size"))?,
-        );
-        for y in 0..target_h {
-            let mut line = String::with_capacity(self.max_width);
-            for x in 0..target_w_u32 {
-                let pixel = resized.get_pixel(x, y);
-                if is_background(pixel.0) {
-                    line.push(' ');
-                    continue;
-                }
-
-                let r = u32::from(pixel.0[0]);
-                let g = u32::from(pixel.0[1]);
-                let b = u32::from(pixel.0[2]);
-                let luminance = (2126_u32.saturating_mul(r)
-                    + 7152_u32.saturating_mul(g)
-                    + 722_u32.saturating_mul(b))
-                    / 10_000;
-
-                if luminance >= 245 {
-                    line.push(' ');
-                    continue;
-                }
-
-                let inverted = 255_u32.saturating_sub(luminance);
-                let shade_index_u32 = inverted.saturating_mul(shades_last) / 255;
-                let shade_index = usize::try_from(shade_index_u32)
-                    .map_err(|_| String::from("invalid shade index"))?;
-                line.push(char::from(shades[shade_index]));
-            }
-            lines.push(line);
-        }
-
-        Ok(lines)
-    }
-}
+const USAGE: &str = "usage:\n  advisor interactive [--samples N] [--seed N]\n  advisor suggest --json PATH [--samples N] [--seed N]";
 
 fn parse_cli() -> Result<CliConfig, String> {
     let mut args = std::env::args().skip(1);
     let mode = match args.next().as_deref() {
         Some("interactive") => Mode::Interactive,
         Some("suggest") => Mode::Suggest,
-        _ => {
-            return Err(String::from(
-                "usage:\n  advisor interactive [--samples N] [--seed N]\n  advisor suggest --json PATH [--samples N] [--seed N]",
-            ));
-        }
+        _ => return Err(String::from(USAGE)),
     };
 
     let mut json_path = None;
@@ -159,9 +65,7 @@ fn parse_cli() -> Result<CliConfig, String> {
                     .map_err(|error| format!("invalid --seed value '{value}': {error}"))?;
             }
             "-h" | "--help" => {
-                return Err(String::from(
-                    "usage:\n  advisor interactive [--samples N] [--seed N]\n  advisor suggest --json PATH [--samples N] [--seed N]",
-                ));
+                return Err(String::from(USAGE));
             }
             _ => {
                 return Err(format!("unexpected argument '{arg}'"));
@@ -206,8 +110,8 @@ fn prompt_hand(prompt: &str) -> Result<Vec<Card>, String> {
             .collect();
 
         match parse_card_list(&pieces) {
-            Ok(cards) if !cards.is_empty() && cards.len() <= 3 => return Ok(cards),
-            Ok(_) => println!("hand must have 1 to 3 cards"),
+            Ok(cards) if !cards.is_empty() && cards.len() <= HAND_SIZE => return Ok(cards),
+            Ok(_) => println!("hand must have 1 to {HAND_SIZE} cards"),
             Err(error) => println!("{error}"),
         }
     }
@@ -245,10 +149,11 @@ fn prompt_usize(prompt: &str) -> Result<usize, String> {
 
 fn print_card_syntax_legend() {
     println!("Card syntax:");
-    println!("  compact: <suit><rank>  (example: oA, s3, cK)");
+    println!("  compact: <suit><rank>  (example: 🪙A, ⚔️3, 🪄K)");
     println!("  explicit: <suit>:<rank> (example: clubs:K, coins:A)");
     println!("Suits:");
-    println!("  o = coins, u = cups, s = swords, c = clubs");
+    println!("  🪙 = denari, 🏆 = coppe, ⚔️ = spade, 🪄 = bastoni");
+    println!("  aliases accepted: o/u/s/c, d/b, english and italian names");
     println!("Ranks:");
     println!("  A = Ace, 2..7 = numeric cards, J = Jack/Fante, Q = Queen/Cavallo, K = King/Re");
 }
@@ -292,77 +197,110 @@ fn print_cards_ascii(
     Ok(())
 }
 
-fn card_asset_path(card: Card) -> PathBuf {
-    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../res/napoletane");
-    base.join(card_asset_name(card))
-}
-
-fn card_asset_name(card: Card) -> String {
-    let suit_name = match card.suit {
-        Suit::Coins => "denara",
-        Suit::Cups => "coppe",
-        Suit::Swords => "spade",
-        Suit::Clubs => "bastoni",
-    };
-    let rank_number = match card.rank {
-        Rank::Ace => 1_u8,
-        Rank::Two => 2_u8,
-        Rank::Three => 3_u8,
-        Rank::Four => 4_u8,
-        Rank::Five => 5_u8,
-        Rank::Six => 6_u8,
-        Rank::Seven => 7_u8,
-        Rank::Jack => 8_u8,
-        Rank::Queen => 9_u8,
-        Rank::King => 10_u8,
-    };
-    format!("{suit_name}{rank_number}.webp")
-}
-
-fn non_background_bounds(image: &image::RgbaImage) -> Option<(u32, u32, u32, u32)> {
-    let width = image.width();
-    let height = image.height();
-    if width == 0 || height == 0 {
-        return None;
-    }
-
-    let mut found = false;
-    let mut min_x = width;
-    let mut min_y = height;
-    let mut max_x = 0_u32;
-    let mut max_y = 0_u32;
-
-    for y in 0..height {
-        for x in 0..width {
-            let pixel = image.get_pixel(x, y);
-            if is_background(pixel.0) {
-                continue;
-            }
-            found = true;
-            if x < min_x {
-                min_x = x;
-            }
-            if y < min_y {
-                min_y = y;
-            }
-            if x > max_x {
-                max_x = x;
-            }
-            if y > max_y {
-                max_y = y;
-            }
+fn prompt_briscola_suit() -> Result<Suit, String> {
+    loop {
+        let suit_raw = prompt_line("briscola suit (coins/cups/swords/clubs or 🪙/🏆/⚔️/🪄): ")?;
+        match parse_suit(&suit_raw) {
+            Ok(suit) => return Ok(suit),
+            Err(error) => println!("{error}"),
         }
     }
-
-    if found { Some((min_x, min_y, max_x, max_y)) } else { None }
 }
 
-fn is_background(pixel: [u8; 4]) -> bool {
-    let alpha = pixel[3];
-    let red = pixel[0];
-    let green = pixel[1];
-    let blue = pixel[2];
-    alpha < 16 || (red > 245 && green > 245 && blue > 245)
+fn prompt_initial_state() -> Result<(InteractiveInit, Vec<Card>, Suit), String> {
+    let briscola_suit = prompt_briscola_suit()?;
+    let face_up_trump = prompt_card("face-up trump card: ")?;
+    let my_initial_hand = prompt_hand("your hand (comma-separated, e.g. 🪙A,⚔️3,🪄K): ")?;
+    let leader = prompt_player("first leader (me/opponent): ")?;
+    let talon_len = prompt_usize(&format!("talon length ({INITIAL_TALON_SIZE} at start): "))?;
+    let score_me = prompt_u8("your score: ")?;
+    let score_opp = prompt_u8("opponent score: ")?;
+
+    let init =
+        InteractiveInit { briscola_suit, face_up_trump, leader, talon_len, score_me, score_opp };
+    Ok((init, my_initial_hand, briscola_suit))
+}
+
+fn print_turn_state(
+    session: &InteractiveSession,
+    renderer: &mut AsciiCardRenderer,
+) -> Result<(), String> {
+    println!();
+    println!(
+        "turn {} | score {}-{} | talon {} | leader {:?}",
+        session.trick_number(),
+        session.score_me(),
+        session.score_opp(),
+        session.talon_len(),
+        session.leader()
+    );
+    print_cards_ascii("your hand:", session.my_hand(), renderer)
+}
+
+fn prompt_my_played_card(session: &InteractiveSession, default_move: Card) -> Result<Card, String> {
+    let default_card = format_card(default_move);
+    loop {
+        let line = prompt_line(&format!("your played card [{default_card}]: "))?;
+        let chosen = if line.is_empty() {
+            default_move
+        } else {
+            match parse_card(&line) {
+                Ok(card) => card,
+                Err(error) => {
+                    println!("{error}");
+                    continue;
+                }
+            }
+        };
+
+        if session.my_hand().contains(&chosen) {
+            return Ok(chosen);
+        }
+        println!("card {} is not in your hand", format_card(chosen));
+    }
+}
+
+fn resolve_trick_cards(
+    leader: Player,
+    my_played: Card,
+    opp_played: Option<Card>,
+    opp_reply_if_me_lead: Option<Card>,
+) -> Result<(Card, Card), String> {
+    if leader == Player::Me {
+        let Some(opp_reply) = opp_reply_if_me_lead else {
+            return Err(String::from("missing opponent reply"));
+        };
+        return Ok((my_played, opp_reply));
+    }
+
+    let Some(opp_lead) = opp_played else {
+        return Err(String::from("missing opponent lead"));
+    };
+    Ok((opp_lead, my_played))
+}
+
+fn prompt_my_draw_card(
+    session: &InteractiveSession,
+    winner: Player,
+) -> Result<Option<Card>, String> {
+    let needs_draw = session.talon_len() > 1 || (session.talon_len() == 1 && winner == Player::Me);
+    if needs_draw {
+        return prompt_card("your drawn card from talon: ").map(Some);
+    }
+    Ok(None)
+}
+
+fn print_suggestions(stats: &[MoveStats]) {
+    println!("suggested moves:");
+    for stats in stats {
+        println!(
+            "  {} -> p_win={:.3}, ev_delta={:.2}, samples={}",
+            format_card(stats.card),
+            stats.p_win,
+            stats.expected_score_delta,
+            stats.n_samples
+        );
+    }
 }
 
 fn run_interactive(samples_per_move: usize, seed: u64) -> Result<(), String> {
@@ -370,38 +308,14 @@ fn run_interactive(samples_per_move: usize, seed: u64) -> Result<(), String> {
     print_card_syntax_legend();
     let mut renderer = AsciiCardRenderer::new(20);
 
-    let briscola_suit = loop {
-        let suit_raw = prompt_line("briscola suit (coins/cups/swords/clubs): ")?;
-        match parse_suit(&suit_raw) {
-            Ok(suit) => break suit,
-            Err(error) => println!("{error}"),
-        }
-    };
-    let face_up_trump = prompt_card("face-up trump card: ")?;
-    let my_initial_hand = prompt_hand("your hand (comma-separated, e.g. oA,s3,cK): ")?;
-    let leader = prompt_player("first leader (me/opponent): ")?;
-    let talon_len = prompt_usize("talon length (33 at start): ")?;
-    let score_me = prompt_u8("your score: ")?;
-    let score_opp = prompt_u8("opponent score: ")?;
-
-    let init =
-        InteractiveInit { briscola_suit, face_up_trump, leader, talon_len, score_me, score_opp };
+    let (init, my_initial_hand, briscola_suit) = prompt_initial_state()?;
 
     let mut session = InteractiveSession::new(init, my_initial_hand)
         .map_err(|error| format!("cannot create session: {error:?}"))?;
     let mut rng = FastRng::new(seed);
 
     while !session.game_over() {
-        println!();
-        println!(
-            "turn {} | score {}-{} | talon {} | leader {:?}",
-            session.trick_number(),
-            session.score_me(),
-            session.score_opp(),
-            session.talon_len(),
-            session.leader()
-        );
-        print_cards_ascii("your hand:", session.my_hand(), &mut renderer)?;
+        print_turn_state(&session, &mut renderer)?;
 
         let opp_played = if session.leader() == Player::Opponent {
             Some(prompt_card("opponent played: ")?)
@@ -416,39 +330,11 @@ fn run_interactive(samples_per_move: usize, seed: u64) -> Result<(), String> {
             .suggest_move(opp_played, &mut rng, samples_per_move)
             .map_err(|error| format!("cannot compute suggestion: {error:?}"))?;
 
-        println!("suggested moves:");
-        for stats in &suggestion.moves {
-            println!(
-                "  {} -> p_win={:.3}, ev_delta={:.2}, samples={}",
-                format_card(stats.card),
-                stats.p_win,
-                stats.expected_score_delta,
-                stats.n_samples
-            );
-        }
+        print_suggestions(&suggestion.moves);
         let suggested_cards: Vec<Card> = suggestion.moves.iter().map(|stats| stats.card).collect();
         print_cards_ascii("suggested card art:", &suggested_cards, &mut renderer)?;
 
-        let default_card = format_card(suggestion.best_move);
-        let my_played = loop {
-            let line = prompt_line(&format!("your played card [{default_card}]: "))?;
-            let chosen = if line.is_empty() {
-                suggestion.best_move
-            } else {
-                match parse_card(&line) {
-                    Ok(card) => card,
-                    Err(error) => {
-                        println!("{error}");
-                        continue;
-                    }
-                }
-            };
-
-            if session.my_hand().contains(&chosen) {
-                break chosen;
-            }
-            println!("card {} is not in your hand", format_card(chosen));
-        };
+        let my_played = prompt_my_played_card(&session, suggestion.best_move)?;
 
         let opp_reply_if_me_lead = if session.leader() == Player::Me {
             Some(prompt_card("opponent reply card: ")?)
@@ -456,17 +342,8 @@ fn run_interactive(samples_per_move: usize, seed: u64) -> Result<(), String> {
             None
         };
 
-        let (lead, reply) = if session.leader() == Player::Me {
-            let Some(opp_reply) = opp_reply_if_me_lead else {
-                return Err(String::from("missing opponent reply"));
-            };
-            (my_played, opp_reply)
-        } else {
-            let Some(opp_lead) = opp_played else {
-                return Err(String::from("missing opponent lead"));
-            };
-            (opp_lead, my_played)
-        };
+        let (lead, reply) =
+            resolve_trick_cards(session.leader(), my_played, opp_played, opp_reply_if_me_lead)?;
 
         let winner = if trick_winner(lead, reply, briscola_suit) == TrickWinner::Leader {
             session.leader()
@@ -474,10 +351,7 @@ fn run_interactive(samples_per_move: usize, seed: u64) -> Result<(), String> {
             session.leader().other()
         };
 
-        let needs_draw =
-            session.talon_len() > 1 || (session.talon_len() == 1 && winner == Player::Me);
-        let my_draw_card =
-            if needs_draw { Some(prompt_card("your drawn card from talon: ")?) } else { None };
+        let my_draw_card = prompt_my_draw_card(&session, winner)?;
 
         let result = session
             .apply_turn(opp_played, my_played, opp_reply_if_me_lead, my_draw_card)

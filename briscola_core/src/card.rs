@@ -1,3 +1,4 @@
+/// Briscola suit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Suit {
     Coins,
@@ -7,8 +8,10 @@ pub enum Suit {
 }
 
 impl Suit {
+    /// All suits in canonical deck order.
     pub const ALL: [Suit; 4] = [Suit::Coins, Suit::Cups, Suit::Swords, Suit::Clubs];
 
+    /// Zero-based suit index in canonical deck order.
     pub fn index(self) -> usize {
         match self {
             Suit::Coins => 0,
@@ -19,6 +22,7 @@ impl Suit {
     }
 }
 
+/// Briscola rank.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Rank {
     Ace,
@@ -34,6 +38,7 @@ pub enum Rank {
 }
 
 impl Rank {
+    /// All ranks in canonical deck order.
     pub const ALL: [Rank; 10] = [
         Rank::Ace,
         Rank::Two,
@@ -47,6 +52,7 @@ impl Rank {
         Rank::King,
     ];
 
+    /// Zero-based rank index in canonical deck order.
     pub fn deck_index(self) -> usize {
         match self {
             Rank::Ace => 0,
@@ -62,6 +68,7 @@ impl Rank {
         }
     }
 
+    /// Trick points for this rank in classic Briscola scoring.
     pub fn points(self) -> u8 {
         match self {
             Rank::Ace => 11,
@@ -73,6 +80,7 @@ impl Rank {
         }
     }
 
+    /// Relative rank strength used to compare cards of the same suit.
     pub fn power(self) -> u8 {
         match self {
             Rank::Two => 0,
@@ -89,6 +97,7 @@ impl Rank {
     }
 }
 
+/// A single card in a Briscola deck.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Card {
     pub suit: Suit,
@@ -96,17 +105,25 @@ pub struct Card {
 }
 
 impl Card {
+    /// Creates a card with the given suit and rank.
     pub fn new(suit: Suit, rank: Rank) -> Self {
         Self { suit, rank }
     }
 
+    /// Zero-based index in canonical deck order.
     pub fn index(self) -> usize {
         self.suit.index() * 10 + self.rank.deck_index()
     }
 }
 
+/// Number of cards in a full Briscola deck.
 pub const FULL_DECK_SIZE: usize = 40;
+/// Number of cards dealt to each player.
+pub const HAND_SIZE: usize = 3;
+/// Cards remaining in the talon after dealing and revealing the trump.
+pub const INITIAL_TALON_SIZE: usize = FULL_DECK_SIZE - (HAND_SIZE * 2 + 1);
 
+/// Converts a canonical deck index into a card.
 pub fn card_from_index(index: usize) -> Option<Card> {
     if index >= FULL_DECK_SIZE {
         return None;
@@ -116,6 +133,7 @@ pub fn card_from_index(index: usize) -> Option<Card> {
     Some(Card::new(suit, rank))
 }
 
+/// Returns a full 40-card Briscola deck in canonical order.
 pub fn full_deck() -> Vec<Card> {
     let mut deck = Vec::with_capacity(FULL_DECK_SIZE);
     for suit in Suit::ALL {
