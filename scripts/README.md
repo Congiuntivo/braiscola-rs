@@ -37,6 +37,10 @@ This directory contains thin wrappers around common `cargo run` commands.
   - Runs all non-interactive examples in sequence and prints section headers.
   - The TUI command is printed as a manual follow-up step.
 
+- `export_wiki.sh <output-dir>`
+  - Exports wiki-ready markdown pages from repository docs.
+  - Used by `.github/workflows/wiki-sync.yml`.
+
 ## Usage
 
 Run scripts from repository root:
@@ -47,4 +51,5 @@ bash scripts/example_simulate.sh 99
 bash scripts/example_simulate_best_me.sh 99 256
 bash scripts/example_advisor_suggest.sh examples/advisor/lead_turn_n.json 192 42
 bash scripts/run_all_examples.sh
+bash scripts/export_wiki.sh /tmp/braiscola-wiki-src
 ```
