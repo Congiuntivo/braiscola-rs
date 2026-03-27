@@ -1,3 +1,8 @@
+//! Hidden-world sampling from public game information.
+//!
+//! Given cards already seen and the visible board state, this module samples a
+//! determinized state by assigning unknown cards to opponent hand and talon.
+
 use briscola_core::bitset::contains;
 use briscola_core::card::full_deck;
 use briscola_core::state::{DeterminizedState, Player, PublicGameState};
@@ -11,6 +16,21 @@ pub enum DeterminizeError {
 }
 
 /// Samples a full hidden game state that is consistent with the public view.
+///
+/// # Parameters
+///
+/// - `public`: Public state with known cards, visible trick info, and talon size.
+/// - `rng`: Random source used to shuffle unknown cards before assignment.
+///
+/// # Returns
+///
+/// A determinized state with opponent hand and talon populated from unknown
+/// cards, while preserving visible information from `public`.
+///
+/// # Errors
+///
+/// Returns [DeterminizeError::InvalidPublicState] when the public state is
+/// inconsistent with card counts.
 pub fn sample_world(
     public: &PublicGameState,
     rng: &mut FastRng,
@@ -47,6 +67,16 @@ pub fn sample_world(
     })
 }
 
+/// Computes opponent hand size implied by the public state.
+///
+/// # Parameters
+///
+/// - `public`: Public game view used to infer current hand counts.
+///
+/// # Returns
+///
+/// If opponent has already led (`opp_played.is_some()`), they should have one
+/// fewer card than me before my reply; otherwise hand sizes are equal.
 fn expected_opponent_hand_len(public: &PublicGameState) -> usize {
     if public.opp_played.is_some() {
         public.my_hand.len().saturating_sub(1)

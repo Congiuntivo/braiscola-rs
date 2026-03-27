@@ -346,3 +346,49 @@ For each legal move:
 And the chosen `best_move`.
 
 ---
+
+## 11) Mapping to this repository
+
+The codebase is split into three crates with a clear responsibility split:
+
+- `briscola_core`
+  - card definitions, score/power ordering,
+  - trick winner and trick points,
+  - public and determinized state transitions.
+- `briscola_ai`
+  - determinization from public information,
+  - rollout policy,
+  - root Monte Carlo move selection.
+- `cli`
+  - simulation binaries,
+  - advisor workflows (`interactive` and `suggest`),
+  - playable TUI and card rendering.
+
+This separation lets the engine remain deterministic and testable in core,
+while keeping hidden-information reasoning and UX concerns isolated.
+
+---
+
+## 12) Practical implementation checklist
+
+1. Validate deterministic core first:
+  - trick winner,
+  - scoring totals,
+  - draw order including last face-up trump handling.
+2. Add determinization invariants:
+  - unknown pool consistency,
+  - opponent hand size inference,
+  - talon length consistency.
+3. Add Monte Carlo evaluation:
+  - per-move sample loop,
+  - robust error handling for failed samples,
+  - ranking by win probability then expected score delta.
+4. Integrate CLI workflows:
+  - one-shot simulation,
+  - advisor JSON snapshot suggestion,
+  - interactive play and hint flow.
+5. Keep reproducibility:
+  - fixed seeds for examples,
+  - deterministic tests for critical transitions.
+
+---

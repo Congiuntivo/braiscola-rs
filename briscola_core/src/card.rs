@@ -1,3 +1,10 @@
+//! Card-domain primitives for a 40-card Briscola deck.
+//!
+//! The deck uses 4 suits x 10 ranks in canonical order. Rank has two separate
+//! semantics:
+//! - points: scoring value collected in tricks.
+//! - power: relative trick strength within same suit.
+
 /// Briscola suit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Suit {
@@ -80,7 +87,9 @@ impl Rank {
         }
     }
 
-    /// Relative rank strength used to compare cards of the same suit.
+    /// Relative trick strength used to compare cards of the same suit.
+    ///
+    /// This is distinct from [Rank::points], which represents scoring value.
     pub fn power(self) -> u8 {
         match self {
             Rank::Two => 0,
@@ -100,7 +109,9 @@ impl Rank {
 /// A single card in a Briscola deck.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Card {
+    /// Card suit.
     pub suit: Suit,
+    /// Card rank.
     pub rank: Rank,
 }
 

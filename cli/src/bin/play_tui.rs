@@ -1,3 +1,8 @@
+//! Terminal UI entrypoint for human-vs-AI play.
+//!
+//! Provides keyboard-driven card selection, optional best-move hints,
+//! and visualized table/hand state.
+
 use std::collections::VecDeque;
 use std::io;
 use std::thread;

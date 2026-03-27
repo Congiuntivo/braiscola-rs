@@ -1,3 +1,5 @@
+//! Card rendering utilities for terminal and plain-text outputs.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -6,20 +8,24 @@ use image::{ImageReader, RgbaImage, imageops::FilterType};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
+/// ASCII renderer that converts card images to grayscale character art.
 pub struct AsciiCardRenderer {
     cache: HashMap<Card, Vec<String>>,
     max_width: usize,
 }
 
 impl AsciiCardRenderer {
+    /// Creates a renderer with target maximum width.
     pub fn new(max_width: usize) -> Self {
         Self { cache: HashMap::new(), max_width }
     }
 
+    /// Returns configured render width.
     pub fn max_width(&self) -> usize {
         self.max_width
     }
 
+    /// Renders one card to ASCII lines using internal cache.
     pub fn render_card(&mut self, card: Card) -> Result<Vec<String>, String> {
         if let Some(lines) = self.cache.get(&card) {
             return Ok(lines.clone());
@@ -98,16 +104,19 @@ impl AsciiCardRenderer {
     }
 }
 
+/// Colored terminal renderer that maps pixels to unicode block characters.
 pub struct TerminalCardRenderer {
     cache: HashMap<Card, Vec<Line<'static>>>,
     max_width: usize,
 }
 
 impl TerminalCardRenderer {
+    /// Creates a renderer with target maximum width.
     pub fn new(max_width: usize) -> Self {
         Self { cache: HashMap::new(), max_width }
     }
 
+    /// Renders one card as styled terminal lines using internal cache.
     pub fn render_card(&mut self, card: Card) -> Result<Vec<Line<'static>>, String> {
         if let Some(lines) = self.cache.get(&card) {
             return Ok(lines.clone());
@@ -176,14 +185,17 @@ impl TerminalCardRenderer {
     }
 }
 
+/// Returns English card name (for example, "Ace of Coins").
 pub fn card_name_english(card: Card) -> String {
     format!("{} of {}", rank_english(card.rank), suit_english(card.suit))
 }
 
+/// Returns Italian card name (for example, "Asso di Denari").
 pub fn card_name_italian(card: Card) -> String {
     format!("{} di {}", rank_italian(card.rank), suit_italian(card.suit))
 }
 
+/// Returns bilingual card name as "English | Italian".
 pub fn card_name_bilingual(card: Card) -> String {
     format!("{} | {}", card_name_english(card), card_name_italian(card))
 }

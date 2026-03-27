@@ -30,17 +30,44 @@ At each decision:
 4. Roll out to terminal state with Briscola heuristics for both players.
 5. Aggregate `p_win` and expected score delta; choose argmax.
 
-## Run
+## Quick Start Progression
+
+Use this sequence to understand the project from simplest to most interactive workflow.
+
+1. Evaluate one built-in decision state:
 
 ```bash
-cargo test
 cargo run -p cli --bin cli
-cargo run -p cli --bin simulate_game -- 42
-cargo run -p cli --bin simulate_game -- 42 --best-me --samples 256
+```
+
+2. Simulate a full game with heuristic policy:
+
+```bash
+cargo run -p cli --bin simulate_game -- 99
+```
+
+3. Simulate with Monte Carlo move selection for Me:
+
+```bash
+cargo run -p cli --bin simulate_game -- 99 --best-me --samples 256
+```
+
+4. Run one-shot advisor from JSON snapshot:
+
+```bash
+cargo run -p cli --bin advisor -- suggest --json examples/advisor/respond_turn_n.json --samples 128 --seed 13
+```
+
+5. Run interactive advisor session:
+
+```bash
 cargo run -p cli --bin advisor -- interactive --samples 128 --seed 42
-cargo run -p cli --bin advisor -- suggest --json /path/to/turn_n.json --samples 128 --seed 42
-cargo run -p cli --bin play_tui --
-cargo run -p cli --bin play_tui -- 42 --hint-samples 128 --opponent-samples 96
+```
+
+6. Play full TUI game against AI:
+
+```bash
+cargo run -p cli --bin play_tui -- --seed 42 --hint-samples 128 --opponent-samples 96
 ```
 
 ## More Examples
@@ -89,9 +116,16 @@ bash scripts/run_all_examples.sh
 ```
 
 Example files:
+
 - `examples/advisor/respond_turn_n.json`
 - `examples/advisor/lead_turn_n.json`
 - `examples/advisor/endgame_turn_n.json`
+
+See companion documentation:
+
+- `examples/advisor/README.md` for scenario meanings and JSON schema guidance.
+- `scripts/README.md` for wrapper script index and argument mapping.
+- `res/napoletane/README.md` for card asset naming and usage notes.
 
 - `cargo run -p cli --bin cli` prints the selected best move and statistics for every legal move.
 - `cargo run -p cli --bin simulate_game -- <seed>` simulates an entire game and prints every trick.
@@ -111,6 +145,7 @@ Example files:
 - `q` or `Esc`: quit.
 
 The TUI automatically handles:
+
 - deck setup and talon draws,
 - opponent turns,
 - score updates,
@@ -133,9 +168,7 @@ The TUI automatically handles:
   "score_me": 50,
   "score_opp": 48,
   "leader": "opponent",
-  "history": [
-    { "lead": "⚔️4", "reply": "⚔️7" }
-  ],
+  "history": [{ "lead": "⚔️4", "reply": "⚔️7" }],
   "seen_cards": ["🪄K"],
   "samples_per_move": 128,
   "seed": 42
@@ -143,6 +176,7 @@ The TUI automatically handles:
 ```
 
 Required fields:
+
 - `briscola_suit`: briscola suit (`coins|cups|swords|clubs`, aliases `o|u|s|c`, `d|b`, or suit emojis).
 - `face_up_trump`: face-up trump card.
 - `my_hand`: your current hand (1 to 3 cards).
@@ -152,6 +186,7 @@ Required fields:
 - `leader`: current trick leader (`me` or `opponent`, also accepts `m/player` and `opp/o`).
 
 Optional fields:
+
 - `opp_played`: opponent lead card if opponent has already played in current trick.
 - `history`: completed tricks from turns `1..N`, each with `{ "lead": "...", "reply": "..." }`.
 - `seen_cards`: extra known cards to include in visible information.
@@ -159,6 +194,7 @@ Optional fields:
 - `seed`: RNG seed for reproducibility (default `42`).
 
 Card format accepted:
+
 - Compact form: `<suit><rank>` like `🪙A`, `🪄K`, `⚔️3`, `🏆7`.
 - Legacy compact aliases are still accepted: `oA`, `cK`, `s3`, `u7` (plus `d` for denari and `b` for bastoni).
 - Explicit form: `<suit>:<rank>` like `clubs:K`, `coins:A`.
@@ -166,6 +202,7 @@ Card format accepted:
 - Rank tokens: `A,2,3,4,5,6,7,J,Q,K` (also accepts names like `ace`, `king`, `fante`, `re`).
 
 Advisor mode behavior:
+
 - `interactive` keeps a live session until game end and suggests best moves each trick.
 - `suggest` is stateless and evaluates only the next decision (`N+1`) from the JSON snapshot.
 

@@ -1,3 +1,5 @@
+//! Advisor helpers for interactive and JSON-driven move suggestions.
+
 use std::fs;
 use std::path::Path;
 
@@ -84,35 +86,48 @@ impl InteractiveSession {
         })
     }
 
+    /// Current cards in my hand.
     pub fn my_hand(&self) -> &[Card] {
         &self.my_hand
     }
 
+    /// Current trick leader when no pending lead is tracked externally.
     pub fn leader(&self) -> Player {
         self.leader
     }
 
+    /// 1-based current trick number.
     pub fn trick_number(&self) -> usize {
         self.trick_number
     }
 
+    /// Current score for Me.
     pub fn score_me(&self) -> u8 {
         self.score_me
     }
 
+    /// Current score for Opponent.
     pub fn score_opp(&self) -> u8 {
         self.score_opp
     }
 
+    /// Remaining talon length.
     pub fn talon_len(&self) -> usize {
         self.talon_len
     }
 
+    /// True when no future draws or hand cards remain for Me.
     pub fn game_over(&self) -> bool {
         self.my_hand.is_empty() && self.talon_len == 0
     }
 
     /// Computes move suggestions for the current turn.
+    ///
+    /// # Parameters
+    ///
+    /// - `opp_played`: Opponent lead card when Me is replying.
+    /// - `rng`: RNG stream used by Monte Carlo sampling.
+    /// - `samples_per_move`: Samples evaluated per legal move.
     pub fn suggest_move(
         &self,
         opp_played: Option<Card>,
@@ -145,6 +160,13 @@ impl InteractiveSession {
     }
 
     /// Applies a completed turn and advances session state.
+    ///
+    /// # Parameters
+    ///
+    /// - `opp_played`: Opponent lead card when opponent led.
+    /// - `my_played`: Card played by Me this turn.
+    /// - `opp_reply_if_me_lead`: Opponent reply card when Me led.
+    /// - `my_draw_card`: Card drawn by Me after trick resolution if draw occurs.
     pub fn apply_turn(
         &mut self,
         opp_played: Option<Card>,

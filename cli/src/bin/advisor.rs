@@ -1,3 +1,9 @@
+//! Advisor CLI entrypoint.
+//!
+//! Supports two modes:
+//! - interactive: prompt-driven turn tracking and suggestions,
+//! - suggest: one-shot suggestion from JSON input.
+
 use std::io::{self, Write};
 use std::path::PathBuf;
 

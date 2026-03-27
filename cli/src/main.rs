@@ -1,3 +1,5 @@
+//! Demo binary that evaluates one built-in public state and prints move stats.
+
 use briscola_ai::mc::{MonteCarloConfig, choose_best_move};
 use briscola_ai::rng::FastRng;
 use briscola_core::bitset::add;

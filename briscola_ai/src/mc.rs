@@ -1,3 +1,10 @@
+//! Monte Carlo move evaluator.
+//!
+//! For each legal move, this module samples hidden worlds consistent with public
+//! information, forces that move, rolls out to terminal state, and aggregates:
+//! - win score in [0.0, 1.0]
+//! - expected final score delta (me - opponent)
+
 use std::cmp::Ordering;
 
 use briscola_core::card::Card;
@@ -10,36 +17,70 @@ use crate::rollout::{choose_lead_card, choose_reply_card};
 /// Monte Carlo search configuration.
 #[derive(Debug, Clone, Copy)]
 pub struct MonteCarloConfig {
+    /// Number of sampled worlds evaluated for each legal move.
+    ///
+    /// Values below 1 are clamped to 1 at runtime.
     pub samples_per_move: usize,
 }
 
 /// Aggregated statistics for a legal move.
 #[derive(Debug, Clone, Copy)]
 pub struct MoveStats {
+    /// Candidate card this row refers to.
     pub card: Card,
+    /// Estimated win probability for this move.
+    ///
+    /// 1.0 = always win, 0.5 = always draw, 0.0 = always lose.
     pub p_win: f64,
+    /// Mean final score delta (me - opponent) across successful samples.
     pub expected_score_delta: f64,
+    /// Number of successful simulations used in this estimate.
     pub n_samples: usize,
 }
 
 /// Ranked result for all legal moves.
 #[derive(Debug, Clone)]
 pub struct BestMoveResult {
+    /// Top-ranked move according to sort policy.
     pub best_move: Card,
+    /// All evaluated moves sorted by descending win probability,
+    /// then descending expected score delta.
     pub moves: Vec<MoveStats>,
 }
 
 /// Failures that can occur while selecting a move by simulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MonteCarloError {
+    /// No legal move can be played from this state.
     NoLegalMoves,
+    /// The caller asked for a move when it is not me to act.
     NotMyTurn,
+    /// Hidden-world sampling failed due to inconsistent public information.
     DeterminizeFailed,
+    /// State transitions failed while simulating a playout.
     SimulationFailed,
+    /// Every attempted sample failed, so no estimate can be produced.
     NoSuccessfulSamples,
 }
 
 /// Chooses the best move among legal options using sampled hidden information.
+///
+/// # Parameters
+///
+/// - `public`: Public game view used as rollout root.
+/// - `rng`: Random generator used for hidden-world sampling.
+/// - `config`: Monte Carlo sampling configuration.
+///
+/// # Returns
+///
+/// A ranked list of per-move estimates and the top move.
+/// Ranking order is descending `p_win`, then descending
+/// `expected_score_delta`.
+///
+/// # Errors
+///
+/// Returns [MonteCarloError] when no legal move exists, the caller is not to
+/// act, determinization fails, simulation fails, or no sample succeeds.
 pub fn choose_best_move(
     public: &PublicGameState,
     rng: &mut FastRng,
@@ -100,6 +141,23 @@ pub fn choose_best_move(
     Ok(BestMoveResult { best_move: moves[0].card, moves })
 }
 
+/// Simulates one playout after forcing my root move.
+///
+/// # Parameters
+///
+/// - `public`: Root public state, used only to detect whether I am replying or leading.
+/// - `state`: Determinized mutable state that will be advanced to terminal.
+/// - `forced_move`: Move to force for me at the root.
+///
+/// # Returns
+///
+/// Tuple `(win_score, delta)` where:
+/// - `win_score` is 1.0 for win, 0.5 for draw, 0.0 for loss.
+/// - `delta` is final score difference `(me - opponent)`.
+///
+/// # Errors
+///
+/// Returns [MonteCarloError::SimulationFailed] if any transition is invalid.
 fn simulate_with_forced_move(
     public: &PublicGameState,
     state: &mut briscola_core::state::DeterminizedState,

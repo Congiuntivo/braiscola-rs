@@ -1,3 +1,5 @@
+//! Interactive play-state orchestration for human-vs-AI game flow.
+
 use briscola_ai::mc::{BestMoveResult, MonteCarloConfig, choose_best_move};
 use briscola_ai::rng::FastRng;
 use briscola_ai::rollout::{choose_lead_card, choose_reply_card};
@@ -6,10 +8,14 @@ use briscola_core::card::{Card, FULL_DECK_SIZE, HAND_SIZE, INITIAL_TALON_SIZE, f
 use briscola_core::rules::TrickWinner;
 use briscola_core::state::{DeterminizedState, Player, PublicGameState, StateError};
 
+/// Configuration for creating a new playable game session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlayConfig {
+    /// Seed used for initial shuffle and RNG streams.
     pub seed: u64,
+    /// Samples used when computing player hints.
     pub hint_samples: usize,
+    /// Samples used when opponent chooses moves via Monte Carlo.
     pub opponent_samples: usize,
 }
 
@@ -19,24 +25,37 @@ impl Default for PlayConfig {
     }
 }
 
+/// Result of one completed player turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlayerTurnOutcome {
+    /// Lead card in resolved trick.
     pub lead_card: Card,
+    /// Reply card in resolved trick.
     pub reply_card: Card,
+    /// Winner of resolved trick.
     pub winner: Player,
+    /// Points captured from the two cards.
     pub trick_points: u8,
+    /// Opponent card seen this turn.
     pub opponent_card: Card,
 }
 
+/// Errors produced by playable game operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayError {
+    /// Internal game state was invalid.
     InvalidState,
+    /// User attempted an illegal move.
     InvalidMove,
+    /// Operation requested while it is not player turn.
     NotPlayerTurn,
+    /// Opponent failed to generate or apply a move.
     OpponentMoveFailed,
+    /// Hint computation failed.
     HintFailed,
 }
 
+/// Mutable game session used by TUI or custom frontends.
 pub struct PlayableGame {
     state: DeterminizedState,
     seen_by_me: CardMask,
@@ -49,6 +68,7 @@ pub struct PlayableGame {
 }
 
 impl PlayableGame {
+    /// Creates a new game with shuffled deck and random initial leader.
     pub fn new(config: PlayConfig) -> Result<Self, PlayError> {
         let mut deck = full_deck();
         let mut deck_rng = FastRng::new(config.seed);
@@ -113,54 +133,67 @@ impl PlayableGame {
         })
     }
 
+    /// Updates hint Monte Carlo sample count (minimum 1).
     pub fn set_hint_samples(&mut self, samples: usize) {
         self.hint_samples = samples.max(1);
     }
 
+    /// Updates opponent Monte Carlo sample count (minimum 1).
     pub fn set_opponent_samples(&mut self, samples: usize) {
         self.opponent_samples = samples.max(1);
     }
 
+    /// Number of completed tricks.
     pub fn completed_tricks(&self) -> usize {
         self.completed_tricks
     }
 
+    /// True when no cards remain in hands and talon.
     pub fn is_game_over(&self) -> bool {
         self.state.is_terminal()
     }
 
+    /// Current score for Me.
     pub fn score_me(&self) -> u8 {
         self.state.score_me
     }
 
+    /// Current score for Opponent.
     pub fn score_opp(&self) -> u8 {
         self.state.score_opp
     }
 
+    /// Remaining talon length.
     pub fn talon_len(&self) -> usize {
         self.state.talon.len()
     }
 
+    /// Remaining opponent hand size.
     pub fn opponent_cards_remaining(&self) -> usize {
         self.state.opp_hand.len()
     }
 
+    /// Current leader when no pending lead exists.
     pub fn leader(&self) -> Player {
         self.state.leader
     }
 
+    /// Face-up trump card.
     pub fn briscola_card(&self) -> Card {
         self.state.face_up_trump
     }
 
+    /// Trump suit.
     pub fn briscola_suit(&self) -> briscola_core::card::Suit {
         self.state.briscola_suit
     }
 
+    /// Current player hand.
     pub fn my_hand(&self) -> &[Card] {
         &self.state.my_hand
     }
 
+    /// Opponent pending lead card, when player is replying.
     pub fn current_opponent_lead(&self) -> Option<Card> {
         if self.state.pending_lead_by == Some(Player::Opponent) {
             self.state.pending_lead
@@ -169,6 +202,7 @@ impl PlayableGame {
         }
     }
 
+    /// True when player can legally choose a card now.
     pub fn is_player_turn(&self) -> bool {
         if self.is_game_over() {
             return false;
@@ -177,6 +211,10 @@ impl PlayableGame {
             || (self.state.leader == Player::Me && self.state.pending_lead.is_none())
     }
 
+    /// Plays opponent lead if opponent is active leader.
+    ///
+    /// Returns `Ok(Some(card))` when a lead was played, `Ok(None)` when no
+    /// action was needed, or [PlayError::OpponentMoveFailed] on failure.
     pub fn maybe_play_opponent_lead(&mut self) -> Result<Option<Card>, PlayError> {
         if self.is_game_over() {
             return Ok(None);
@@ -194,6 +232,7 @@ impl PlayableGame {
         Ok(Some(lead))
     }
 
+    /// Computes best-move hint for current player turn.
     pub fn hint_best_move(&mut self) -> Result<BestMoveResult, PlayError> {
         if !self.is_player_turn() {
             return Err(PlayError::NotPlayerTurn);
@@ -219,6 +258,11 @@ impl PlayableGame {
         .map_err(|_| PlayError::HintFailed)
     }
 
+    /// Applies player action and resolves the full trick.
+    ///
+    /// Handles both turn shapes:
+    /// - player replies to an existing opponent lead,
+    /// - player leads and opponent auto-replies.
     pub fn play_player_card(&mut self, card: Card) -> Result<PlayerTurnOutcome, PlayError> {
         if !self.is_player_turn() {
             return Err(PlayError::NotPlayerTurn);
@@ -277,6 +321,7 @@ impl PlayableGame {
         })
     }
 
+    /// Chooses opponent lead card from opponent perspective.
     fn choose_opponent_lead(&mut self) -> Result<Card, PlayError> {
         let public = PublicGameState {
             my_hand: self.state.opp_hand.clone(),
@@ -299,6 +344,7 @@ impl PlayableGame {
         .or_else(|_| Ok(choose_lead_card(&self.state, Player::Opponent)))
     }
 
+    /// Chooses opponent reply card from opponent perspective.
     fn choose_opponent_reply(&mut self, my_lead: Card) -> Result<Card, PlayError> {
         let mut seen = self.seen_by_opp;
         seen = add(seen, my_lead);
@@ -325,6 +371,7 @@ impl PlayableGame {
     }
 }
 
+/// Detects newly drawn card by set difference between old and new hand.
 fn drawn_card(old_hand: &[Card], new_hand: &[Card]) -> Option<Card> {
     for card in new_hand {
         if !old_hand.contains(card) {
@@ -334,6 +381,7 @@ fn drawn_card(old_hand: &[Card], new_hand: &[Card]) -> Option<Card> {
     None
 }
 
+/// Computes winner from final scores, or `None` for draw.
 pub fn winner_from_scores(score_me: u8, score_opp: u8) -> Option<Player> {
     match score_me.cmp(&score_opp) {
         std::cmp::Ordering::Greater => Some(Player::Me),
@@ -342,6 +390,7 @@ pub fn winner_from_scores(score_me: u8, score_opp: u8) -> Option<Player> {
     }
 }
 
+/// Computes displayed trick winner from leader and played cards.
 pub fn trick_winner_for_display(
     leader: Player,
     lead: Card,

@@ -1,3 +1,7 @@
+//! Headless simulation CLI entrypoint.
+//!
+//! Runs one full game simulation and prints trick-by-trick logs plus final score.
+
 use cli::{MePolicy, SimulationOptions, simulate_game_with_options};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

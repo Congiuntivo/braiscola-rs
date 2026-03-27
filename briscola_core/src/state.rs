@@ -1,3 +1,9 @@
+//! Public and determinized Briscola game states plus transition logic.
+//!
+//! Two state views are modeled:
+//! - [PublicGameState]: information available to a decision-making player.
+//! - [DeterminizedState]: fully specified world used for simulation.
+
 use crate::bitset::CardMask;
 use crate::card::{Card, Suit};
 use crate::rules::{TrickWinner, trick_points, trick_winner};
@@ -5,7 +11,9 @@ use crate::rules::{TrickWinner, trick_points, trick_winner};
 /// Player identity from the perspective of the local agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Player {
+    /// The local player perspective.
     Me,
+    /// The opposing player.
     Opponent,
 }
 
@@ -22,14 +30,23 @@ impl Player {
 /// Public information available at decision time.
 #[derive(Debug, Clone)]
 pub struct PublicGameState {
+    /// Cards currently in my hand.
     pub my_hand: Vec<Card>,
+    /// Opponent lead card when I must reply, otherwise none.
     pub opp_played: Option<Card>,
+    /// Trump suit for this match.
     pub briscola_suit: Suit,
+    /// Cards still in talon excluding the exposed face-up trump.
     pub talon_len: usize,
+    /// Face-up trump card under the talon.
     pub last_face_up_trump: Card,
+    /// Set of cards already visible in history or in known hands.
     pub seen_cards: CardMask,
+    /// My current score.
     pub score_me: u8,
+    /// Opponent current score.
     pub score_opp: u8,
+    /// Player who leads when there is no pending lead card.
     pub leader: Player,
 }
 
@@ -43,30 +60,45 @@ impl PublicGameState {
 /// Fully specified game state used by simulation/rollout.
 #[derive(Debug, Clone)]
 pub struct DeterminizedState {
+    /// My current hand.
     pub my_hand: Vec<Card>,
+    /// Opponent hand in this sampled world.
     pub opp_hand: Vec<Card>,
+    /// Remaining draw pile order.
     pub talon: Vec<Card>,
+    /// Trump suit.
     pub briscola_suit: Suit,
+    /// Face-up trump card awarded when talon runs out after winner draw.
     pub face_up_trump: Card,
+    /// My score.
     pub score_me: u8,
+    /// Opponent score.
     pub score_opp: u8,
+    /// Current leader when no pending trick exists.
     pub leader: Player,
+    /// Current lead card waiting for reply.
     pub pending_lead: Option<Card>,
+    /// Player who played pending lead.
     pub pending_lead_by: Option<Player>,
 }
 
 /// State transition errors for determinized gameplay operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateError {
+    /// Action does not match turn/trick phase constraints.
     InvalidTurn,
+    /// Attempted to play a card not present in actor hand.
     CardNotInHand,
+    /// Reply attempted without a pending lead card.
     MissingLead,
 }
 
 /// Outcome for a completed trick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrickOutcome {
+    /// Player that wins the trick.
     pub winner: Player,
+    /// Points captured by winner from the two played cards.
     pub trick_points: u8,
 }
 
@@ -90,6 +122,17 @@ impl DeterminizedState {
     }
 
     /// Plays a lead card for the current trick leader.
+    ///
+    /// # Parameters
+    ///
+    /// - `player`: Player trying to lead.
+    /// - `card`: Card to play.
+    ///
+    /// # Errors
+    ///
+    /// Returns [StateError::InvalidTurn] if a trick is already pending or
+    /// `player` is not the leader. Returns [StateError::CardNotInHand] when
+    /// `card` is not present in player hand.
     pub fn play_lead_card(&mut self, player: Player, card: Card) -> Result<(), StateError> {
         if self.pending_lead.is_some() || self.leader != player {
             return Err(StateError::InvalidTurn);
@@ -102,6 +145,29 @@ impl DeterminizedState {
     }
 
     /// Plays a reply card and resolves the trick.
+    ///
+    /// # Parameters
+    ///
+    /// - `player`: Player replying to the pending lead.
+    /// - `card`: Reply card to play.
+    ///
+    /// # Returns
+    ///
+    /// [TrickOutcome] containing winner and points earned in this trick.
+    ///
+    /// # Errors
+    ///
+    /// Returns [StateError::MissingLead] when no pending lead exists,
+    /// [StateError::InvalidTurn] when leader tries to reply, or
+    /// [StateError::CardNotInHand] when `card` is absent from hand.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Validate pending lead and actor role.
+    /// 2. Remove reply card from actor hand.
+    /// 3. Resolve winner and add trick points.
+    /// 4. Perform draw phase (winner first, loser second).
+    /// 5. Reset pending trick and assign new leader.
     pub fn play_reply_card(
         &mut self,
         player: Player,
@@ -131,6 +197,7 @@ impl DeterminizedState {
         Ok(TrickOutcome { winner, trick_points: points })
     }
 
+    /// Returns mutable access to player hand.
     fn hand_mut(&mut self, player: Player) -> &mut Vec<Card> {
         match player {
             Player::Me => &mut self.my_hand,
@@ -138,6 +205,7 @@ impl DeterminizedState {
         }
     }
 
+    /// Removes `card` from player hand.
     fn remove_card_from_hand(&mut self, player: Player, card: Card) -> Result<(), StateError> {
         let hand = self.hand_mut(player);
         let position =
@@ -146,10 +214,12 @@ impl DeterminizedState {
         Ok(())
     }
 
+    /// Appends `card` to player hand.
     fn add_card_to_hand(&mut self, player: Player, card: Card) {
         self.hand_mut(player).push(card);
     }
 
+    /// Adds trick points to player score, saturating at u8 bounds.
     fn add_score(&mut self, player: Player, points: u8) {
         match player {
             Player::Me => self.score_me = self.score_me.saturating_add(points),
@@ -157,6 +227,10 @@ impl DeterminizedState {
         }
     }
 
+    /// Resolves post-trick draw order.
+    ///
+    /// Winner draws first from talon. Loser draws second from talon, or takes
+    /// the face-up trump when talon becomes empty after winner draw.
     fn draw_phase(&mut self, winner: Player) {
         if self.talon.is_empty() {
             return;

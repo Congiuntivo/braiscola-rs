@@ -1,3 +1,11 @@
+//! CLI-facing simulation APIs and shared helpers.
+//!
+//! This crate exposes reusable building blocks used by command binaries:
+//! - full game simulation with configurable strategy for Me,
+//! - advisor session and JSON suggestion helpers,
+//! - interactive play-state orchestration,
+//! - card rendering helpers for text and terminal UI.
+
 pub mod advisor;
 pub mod card_art;
 pub mod play;
@@ -9,15 +17,21 @@ use briscola_core::bitset::{CardMask, add};
 use briscola_core::card::{Card, FULL_DECK_SIZE, HAND_SIZE, INITIAL_TALON_SIZE, Suit, full_deck};
 use briscola_core::state::{DeterminizedState, Player, PublicGameState};
 
+/// Policy used for Me when simulating games.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MePolicy {
+    /// Fast deterministic heuristic policy.
     Heuristic,
+    /// Monte Carlo best-move policy from briscola_ai.
     BestMove,
 }
 
+/// Simulation configuration knobs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SimulationOptions {
+    /// Move-selection policy for Me.
     pub me_policy: MePolicy,
+    /// Samples per move when [MePolicy::BestMove] is used.
     pub samples_per_move: usize,
 }
 
@@ -27,53 +41,104 @@ impl Default for SimulationOptions {
     }
 }
 
+/// Winner of a completed simulated game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameWinner {
+    /// Me has strictly higher final score.
     Me,
+    /// Opponent has strictly higher final score.
     Opponent,
+    /// Final scores are equal.
     Draw,
 }
 
+/// Simulation failure causes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulationError {
+    /// Deck shape or derived card counts were invalid.
     InvalidDeck,
+    /// A state transition failed unexpectedly.
     InvalidTransition,
+    /// Monte Carlo strategy failed while choosing a move.
     StrategyFailed(MonteCarloError),
 }
 
+/// Snapshot log for one resolved trick during simulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrickLog {
+    /// 1-based trick number.
     pub number: usize,
+    /// Player that led this trick.
     pub leader: Player,
+    /// Card led by [TrickLog::leader].
     pub lead_card: Card,
+    /// Player that replied to the lead.
     pub follower: Player,
+    /// Reply card by [TrickLog::follower].
     pub reply_card: Card,
+    /// Winner of this trick.
     pub winner: Player,
+    /// Points collected in this trick.
     pub trick_points: u8,
+    /// Score for Me immediately after trick resolution.
     pub score_me: u8,
+    /// Score for Opponent immediately after trick resolution.
     pub score_opp: u8,
+    /// My hand size after trick resolution.
     pub my_hand_len: usize,
+    /// Opponent hand size after trick resolution.
     pub opp_hand_len: usize,
+    /// Talon size after trick resolution.
     pub talon_len: usize,
 }
 
+/// Full simulation output, including trick-by-trick history.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameLog {
+    /// RNG seed used to initialize simulation state.
     pub seed: u64,
+    /// Trump suit for the game.
     pub briscola_suit: Suit,
+    /// Face-up trump card under the talon.
     pub face_up_trump: Card,
+    /// My starting hand at trick 1.
     pub initial_my_hand: Vec<Card>,
+    /// Opponent starting hand at trick 1.
     pub initial_opp_hand: Vec<Card>,
+    /// Ordered trick history from first to last trick.
     pub tricks: Vec<TrickLog>,
+    /// Final score for Me.
     pub final_score_me: u8,
+    /// Final score for Opponent.
     pub final_score_opp: u8,
+    /// Winner derived from final scores.
     pub winner: GameWinner,
 }
 
+/// Simulates a full game with default [SimulationOptions].
+///
+/// # Parameters
+///
+/// - `seed`: Seed controlling deck shuffle and deterministic behavior.
 pub fn simulate_game(seed: u64) -> Result<GameLog, SimulationError> {
     simulate_game_with_options(seed, SimulationOptions::default())
 }
 
+/// Simulates a full game from seed and strategy options.
+///
+/// # Parameters
+///
+/// - `seed`: Seed controlling deck shuffle and RNG streams.
+/// - `options`: Strategy and Monte Carlo sampling options.
+///
+/// # Returns
+///
+/// A [GameLog] containing complete game trace and final result.
+///
+/// # Errors
+///
+/// Returns [SimulationError] if initial state is inconsistent, a transition
+/// fails, or strategy selection fails.
 pub fn simulate_game_with_options(
     seed: u64,
     options: SimulationOptions,

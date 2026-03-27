@@ -1,11 +1,29 @@
+//! Trick-resolution and scoring rules for Briscola.
+
 use crate::card::{Card, Suit};
 
+/// Winner role in a resolved two-card trick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrickWinner {
+    /// Player who led the trick.
     Leader,
+    /// Player who replied to the lead.
     Follower,
 }
 
+/// Resolves the winner of a two-card trick.
+///
+/// # Parameters
+///
+/// - `lead_card`: Card played by the leader.
+/// - `reply_card`: Card played by the follower.
+/// - `briscola_suit`: Trump suit.
+///
+/// # Returns
+///
+/// - [TrickWinner::Follower] if follower beats leader by same-suit higher power,
+///   or by playing trump against non-trump.
+/// - [TrickWinner::Leader] otherwise.
 pub fn trick_winner(lead_card: Card, reply_card: Card, briscola_suit: Suit) -> TrickWinner {
     if lead_card.suit == reply_card.suit {
         if reply_card.rank.power() > lead_card.rank.power() {
@@ -20,6 +38,12 @@ pub fn trick_winner(lead_card: Card, reply_card: Card, briscola_suit: Suit) -> T
     }
 }
 
+/// Returns total points contained in a completed trick.
+///
+/// # Parameters
+///
+/// - `lead_card`: Card played by the leader.
+/// - `reply_card`: Card played by the follower.
 pub fn trick_points(lead_card: Card, reply_card: Card) -> u8 {
     lead_card.rank.points() + reply_card.rank.points()
 }
