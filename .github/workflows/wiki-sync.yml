@@ -24,21 +24,39 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Show sync target
+        run: |
+          echo "Repository: ${{ github.repository }}"
+          echo "Wiki URL: https://github.com/${{ github.repository }}.wiki.git"
+
       - name: Export wiki pages from repository docs
         run: |
           bash scripts/export_wiki.sh "$RUNNER_TEMP/wiki-src"
+          echo "Exported pages:"
+          ls -la "$RUNNER_TEMP/wiki-src"
+          for required in Home.md Game-as-Algorithm.md Advisor-Examples.md Scripts.md Card-Assets.md _Sidebar.md; do
+            if [[ ! -f "$RUNNER_TEMP/wiki-src/$required" ]]; then
+              echo "Missing exported wiki page: $required" >&2
+              exit 1
+            fi
+          done
 
       - name: Clone repository wiki
         run: |
           git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" "$RUNNER_TEMP/wiki"
+          echo "Current wiki repo files before sync:"
+          ls -la "$RUNNER_TEMP/wiki"
 
       - name: Sync pages
         run: |
           rsync -av --delete "$RUNNER_TEMP/wiki-src/" "$RUNNER_TEMP/wiki/"
+          echo "Wiki repo files after sync:"
+          ls -la "$RUNNER_TEMP/wiki"
 
       - name: Commit and push wiki changes
         run: |
           cd "$RUNNER_TEMP/wiki"
+          git status --porcelain
           if [[ -z "$(git status --porcelain)" ]]; then
             echo "No wiki changes detected"
             exit 0
