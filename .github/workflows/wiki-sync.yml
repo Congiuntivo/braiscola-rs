@@ -49,7 +49,7 @@ jobs:
 
       - name: Sync pages
         run: |
-          rsync -av --delete "$RUNNER_TEMP/wiki-src/" "$RUNNER_TEMP/wiki/"
+          rsync -av --delete --exclude='.git' "$RUNNER_TEMP/wiki-src/" "$RUNNER_TEMP/wiki/"
           echo "Wiki repo files after sync:"
           ls -la "$RUNNER_TEMP/wiki"
 
