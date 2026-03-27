@@ -6,6 +6,10 @@ on:
       - main
     paths:
       - README.md
+      - Cargo.toml
+      - briscola_core/**/*.rs
+      - briscola_ai/**/*.rs
+      - cli/**/*.rs
       - plan/**/*.md
       - examples/**/*.md
       - scripts/**/*.md
@@ -29,12 +33,25 @@ jobs:
           echo "Repository: ${{ github.repository }}"
           echo "Wiki URL: https://github.com/${{ github.repository }}.wiki.git"
 
+      - name: Install nightly toolchain for api markdown generation
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-doc-md
+        run: |
+          cargo +nightly install cargo-doc-md --locked
+
+      - name: Generate Rust API markdown
+        run: |
+          cargo +nightly doc-md --workspace -o "$RUNNER_TEMP/doc-md"
+          echo "Generated API markdown structure:"
+          find "$RUNNER_TEMP/doc-md" -maxdepth 3 -type f | sort
+
       - name: Export wiki pages from repository docs
         run: |
-          bash scripts/export_wiki.sh "$RUNNER_TEMP/wiki-src"
+          bash scripts/export_wiki.sh "$RUNNER_TEMP/wiki-src" "$RUNNER_TEMP/doc-md"
           echo "Exported pages:"
           ls -la "$RUNNER_TEMP/wiki-src"
-          for required in Home.md Game-as-Algorithm.md Advisor-Examples.md Scripts.md Card-Assets.md _Sidebar.md; do
+          for required in Home.md Game-as-Algorithm.md Advisor-Examples.md Scripts.md Card-Assets.md Rust-API.md _Sidebar.md; do
             if [[ ! -f "$RUNNER_TEMP/wiki-src/$required" ]]; then
               echo "Missing exported wiki page: $required" >&2
               exit 1
